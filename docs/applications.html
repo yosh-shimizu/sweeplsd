@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SweepLSD — applications</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body><div class="wrap">
+
+<h1>Applications: does the design reach the task?</h1>
+<p class="sub">The streaming design buys O(width) memory, content-independent cost, and low
+latency. The question for an application is whether those survive to <i>task</i> accuracy.</p>
+<nav><a href="index.html">Algorithm</a> <a href="benchmarks.html">Speed</a>
+<a href="evaluation.html">Quality</a> <a href="vp_evaluation.html">Vanishing points</a>
+<a href="applications.html"><b>Applications</b></a>
+<a href="fpga.html">FPGA</a> <a href="https://github.com/ysmz334/sweeplsd">Repository</a></nav>
+
+<div class="key"><b>Direction-only geometry is where the architecture pays off.</b> Camera
+attitude and vanishing points use a segment's <i>direction</i>, not its endpoint position — so
+they are transparent to SweepLSD's one caveat (the ≈1.8&nbsp;px extent bias) and reward its
+strongest axis (per-segment direction accuracy). All three studies below feed each detector's
+segments into the <i>same</i> calibrated estimator, so what is compared is the detector, not the
+geometry code.</div>
+
+<h2>1. Single-frame camera attitude, at any resolution</h2>
+<p><b>Protocol.</b> Real line datasets top out near 2&nbsp;MP and upsampling only manufactures
+false edges, so the resolution claim cannot be tested downstream on real data. We instead render
+two photorealistic scenes — an indoor classroom and the outdoor Barcelona Pavilion — from 540p to
+4K with the camera pose <i>identical</i> across resolutions and <b>exact</b> attitude ground
+truth. Each detector's segments feed the same calibrated Manhattan/gravity estimator, and we
+report the angle between the recovered and true gravity directions.</p>
+
+<p><b>Accuracy is preserved, not traded.</b> Across the sweep the four detectors are within each
+other's noise on attitude: indoors all sit at <b>0.7–1.6°</b> median gravity error with no clear
+ordering (the structure is resolved even at 540p), and outdoors SweepLSD has the <i>best</i>
+median at every resolution, improving from 1.67° at 540p to <b>1.13° at 4K</b> as fine structure
+resolves. The speed and memory that follow are therefore not paid for in task accuracy.</p>
+
+<p><b>Memory and speed diverge with resolution.</b> At 4K (Barcelona Pavilion) SweepLSD detects
+in ≈30&nbsp;ms against ELSED's 81&nbsp;ms (2.7×) and EDLines' 128&nbsp;ms, and — the decisive
+figure — holds a peak resident set of <b>≈22&nbsp;MB</b> against ELSED's and EDLines' ≈148&nbsp;MB
+(6.8×) and the reference LSD's 245&nbsp;MB (11×). SweepLSD's memory grows only <b>3.4×</b>
+(6.4→21.7&nbsp;MB) as the pixel count grows 16×, and most of the 22&nbsp;MB is the input image
+itself — the working set is O(width), now shown at the task level and at a resolution real ground
+truth cannot reach.</p>
+
+<div class="gallery" style="grid-template-columns:1fr">
+<figure><img src="assets/apps/attitude_vs_resolution.png"><figcaption>Barcelona Pavilion, 540p–4K
+at a fixed pose. Left: median gravity error — comparable across detectors (SweepLSD best).
+Middle/right: detect time and peak memory — SweepLSD's O(width) working set holds 4K memory at
+≈1/7 of the edge-drawing detectors and 1/11 of the reference LSD.</figcaption></figure>
+</div>
+
+<p><b>Real-time horizon lock.</b> As an end-to-end demonstration we stabilise a 4K forward flight
+through the Pavilion (camera roll up to ±22°) by counter-rotating each frame with SweepLSD's
+per-frame attitude estimate. The horizontal error has median <b>0.63°</b> over 180 frames and
+0.28° on the extreme-roll frame; the estimated horizon tracks the true one to well under a degree.
+The O(width), low-latency front end is what makes per-frame 4K attitude affordable in the first
+place.</p>
+
+<div class="gallery" style="grid-template-columns:1fr">
+<figure><img src="assets/apps/attitude_horizon.jpg"><figcaption>One 4K frame: the SweepLSD-estimated
+horizon (red) against ground truth (blue), nearly coincident.</figcaption></figure>
+</div>
+<p class="sub">ELSED's apparent 4K accuracy dip is a parameter-calibration artifact (its defaults
+target 640×480); at its design minimum length the 4K accuracy returns to parity, and the memory
+and speed gaps are independent of it. Speed ratios against the OpenCV-based baselines depend on
+the OpenCV build by ±20–30%; all four detectors here use one toolchain.</p>
+
+<h2>2. Real data: EuRoC and TUM-VI</h2>
+<p>Synthesis isolates the resolution effect; two real visual-inertial datasets check that the
+single-frame attitude estimator survives real optics, motion blur, and imperfect scene
+verticality. The estimator is unchanged — single frame, monocular, geometry only, <b>no temporal
+smoothing</b> — scored against each dataset's metric ground truth.</p>
+<table><thead><tr><th>dataset</th><th>frames</th><th>median gravity error</th><th>&lt;3°</th><th>throughput (1 core)</th></tr></thead><tbody>
+<tr><td><b>EuRoC MAV</b> (752×480, 11 seq)</td><td>26,540</td><td class="best">0.73°</td><td>87.8%</td><td>≈284 FPS</td></tr>
+<tr><td><b>TUM-VI</b> (512² fisheye→pinhole, 6 rooms)</td><td>15,393</td><td class="best">0.96°</td><td>88.5%</td><td>≈511 FPS</td></tr>
+</tbody></table>
+
+<div class="note"><b>The error floor is the scene, not the detector.</b> The rigid Machine Hall
+sequences reach 0.33–0.44° median, while the curated Vicon/mocap rooms sit near 1°. An IMU
+cross-check (recovering gravity dynamically from accelerometer and pose) shows the ground-truth
+world-<i>z</i> axis is itself tilted by ≤0.006° in Machine Hall but 0.06–0.47° in the mocap rooms
+— so a single visual frame can only return the scene's <i>dominant pseudo-vertical</i>, and its
+floor is set by how truly vertical the room was built. This is a property of monocular
+single-frame gravity, recorded as a legitimate limit of the task rather than a detector
+deficiency.</div>
+
+<p><b>A second honest fact.</b> TUM-VI ships both a native 1024² capture and an official 512²
+downscale of the same footage — a <i>real</i> 4× detail difference, not upsampling. Feeding the
+4× finer imagery changes the pooled six-room accuracy by nothing (the 512² version in fact wins
+every metric by a hair: median 0.96 vs 1.01°), because the floor here is the scene's
+pseudo-vertical (≈0.8°) plus the ground-truth tilt (≈0.1°), not line localisation. High resolution
+pays off only when the task is localisation-limited — not on a task capped by scene geometry.</p>
+
+<p><b>Same fair protocol as the vanishing-point study.</b> Feed every detector's segments into the
+identical estimator, hyperparameters tuned per detector on a held-out room. At standard field of
+view (test rooms 2–6) SweepLSD has the best median (<b>0.96°</b>, &lt;1° on 51.3% of frames)
+against ELSED 1.19°, EDLines 1.06°, reference LSD 1.06°, while detecting fastest (3.75&nbsp;ms
+one-pass, 2.5× ELSED and 3.9× EDLines); at a wide 139° field of view the four converge to a
+near-tie (0.89–0.95°). As on <a href="vp_evaluation.html">vanishing points</a>, task accuracy is
+at parity and the streaming design's speed and memory are the discriminators — now on handheld
+real data.</p>
+
+<h2>3. Scope: where it fits, and where it does not</h2>
+<p>SweepLSD is at its best when the scene is <b>structure-dominant</b> (architecture, indoor
+Manhattan geometry, urban imagery), when the task needs <b>line direction</b> rather than absolute
+endpoint position (attitude, vanishing points, rotation), and — above all — when the deployment is
+<b>high-resolution or memory-/power-constrained</b>, where the O(width) working set and the
+content-independent, worst-case-flat per-pixel cost are worth the most. That is precisely the
+embedded, streaming-sensor, FPGA-oriented regime the original thesis targeted.</p>
+<p>Three conditions push outside it:</p>
+<ul>
+<li><b>Curved and textured content.</b> The two-direction gradient quantisation fragments curves
+into short chords and rejects them as lines (see the <a href="evaluation.html">quality page</a>),
+so SweepLSD is a poor fit for lane-marking or contour tasks in their raw form, and for heavily
+textured scenes.</li>
+<li><b>Low edge density or low resolution.</b> The flat worst-case cost that guarantees a deadline
+is also why the speed margin over edge-drawing detectors narrows when there is little to draw — on
+sparse mocap rooms the ELSED gap falls from ≈4.6× on dense high-detail imagery toward 2.3×, and at
+low resolution the memory and latency advantages simply have less to act on.</li>
+<li><b>Absolute endpoint position.</b> The raw endpoints are a deterministic ≈1.7–2.0&nbsp;px short
+and the contrast gate can clip faint line ends; direction-only tasks are transparent to both, but
+metrology or junction-precise tasks must apply the angle-based endpoint correction (see the
+<a href="evaluation.html">quality page</a>) or snap to nearby evidence first.</li>
+</ul>
+<div class="note"><b>Outlook (untested).</b> Directions that follow naturally from the scan-line
+front end but are left as future work: (i) the row-streaming pipeline is a structural match for
+<b>line-scan</b> industrial sensors, which deliver one image row at a time; (ii) inserting a blank
+edge row periodically in <i>y</i> would cut long curves into short quasi-straight chords the
+labeller recovers as a chain — a candidate lane/curve extractor built by <i>removing</i> work;
+(iii) the O(width) memory makes very large images cheap, suggesting high-DPI document and
+engineering-drawing line extraction; (iv) room-layout and wireframe estimation reuse the same
+short-but-accurate-segment support that wins the indoor vanishing-point study.</div>
+
+<footer>Attitude scenes rendered from vector ground truth (Blender); EuRoC MAV and TUM-VI used
+under their respective terms (single-frame, monocular, geometry-only, no temporal smoothing).
+Estimator and harnesses are the same detector-agnostic ones used on the
+<a href="vp_evaluation.html">vanishing-point</a> page. Measured on i7-8700K, GCC 15.2.</footer>
+</div></body></html>

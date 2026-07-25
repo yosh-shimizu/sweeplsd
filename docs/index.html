@@ -13,10 +13,11 @@
 with an integer-only streaming core.</p>
 <nav><a href="index.html"><b>Algorithm</b></a> <a href="benchmarks.html">Speed</a>
 <a href="evaluation.html">Quality</a> <a href="vp_evaluation.html">Vanishing points</a>
+<a href="applications.html">Applications</a>
 <a href="fpga.html">FPGA</a> <a href="https://github.com/ysmz334/sweeplsd">Repository</a></nav>
 
 <img class="wide" src="assets/hero_segments.png" alt="SweepLSD segments on a Full-HD photo">
-<p class="sub" style="margin-top:4px">Full-HD photo, 2938 segments in ~11 ms (one detector sweep, single thread).</p>
+<p class="sub" style="margin-top:4px">Full-HD photo, 2980 segments in ~11 ms (one detector sweep, single thread).</p>
 
 <div class="key"><b>The idea.</b> Most line segment detectors hold the whole image (and several
 full-size intermediates) in memory and revisit pixels many times. SweepLSD instead treats the
@@ -49,7 +50,11 @@ direction quantised to just <i>horizontal</i> or <i>vertical</i> — that is all
 <li><b>Edge.</b> Threshold on the power plus non-maximum suppression along the dominant
 gradient axis, branch-free.</li>
 <li><b>Endpoint candidates.</b> A 5×5 ring test marks edge pixels where a segment starts,
-ends, branches or corners. These delimit the pixel runs that may become segments.</li>
+ends, branches or corners. A candidate is confirmed only where <i>two</i> are consecutive and
+the <i>inner</i> one is kept — a deterministic rule that also lands the recovered tips ≈1 px
+inside the true endpoint (a correctable extent bias; see the
+<a href="evaluation.html">quality page</a>). These delimit the pixel runs that may become
+segments.</li>
 <li><b>Labelling + judgment.</b> A row-streaming connected-component labeller carries, per
 label, running <i>scatter moments</i> (Σx, Σy, Σx², Σxy, Σy², count). When a run closes —
 its second endpoint-candidate contact — it is judged on the spot: a segment is emitted iff
@@ -71,6 +76,19 @@ auto-vectorize them, which keeps the code readable and portable.</p>
 <p>The hardware-friendliness is not hypothetical: the detector
 <a href="fpga.html">runs live on a 2009-era FPGA</a> — HDMI in → detect → overlay out at
 1080p30, with no frame buffer.</p>
+
+<div class="key"><b>How the labelling stays O(width).</b> The connected-component labeller is a
+single-pass <b>union–find</b> (with path compression) that merges edge runs touching across
+adjacent rows. What keeps its memory bounded is <b>label recycling</b>: labels live in a
+<i>fixed pool</i> addressed through a ring free-list, split into a hot record (moment
+accumulation for active runs) and a cold record (dormant). The instant a component can no longer
+be touched — its last edge row has passed above the scan line — an end-of-row retire sweep frees
+its slot for reuse. The number of <i>live</i> labels is therefore bounded by the image
+<b>width</b>, not its pixel count: the working set is ~15 KB and stays in cache, where a
+grow-forever label table would reach tens of thousands of slots (megabytes) on a dense frame. The
+pool is sized to width/4 and grows to width/2 only on abnormal inputs; a correct image never
+exceeds it (in hardware, overflow drops labels rather than allocating). This is what turns "a few
+rows of pixels" into a genuine O(width) memory bound end to end.</div>
 
 <h2>3. Measured refinements (all on by default)</h2>
 <p><code>Params{}</code> is SweepLSD as published: the refinements below are all enabled, and

@@ -13,6 +13,7 @@
 This page is the missing half: SweepLSD running live on 2009-era silicon.</p>
 <nav><a href="index.html">Algorithm</a> <a href="benchmarks.html">Speed</a>
 <a href="evaluation.html">Quality</a> <a href="vp_evaluation.html">Vanishing points</a>
+<a href="applications.html">Applications</a>
 <a href="fpga.html"><b>FPGA</b></a> <a href="https://github.com/ysmz334/sweeplsd">Repository</a></nav>
 
 <div class="key"><b>What runs.</b> A Digilent Atlys (Xilinx <b>Spartan-6 LX45</b>, 2009)
@@ -43,6 +44,26 @@ the hardware configuration. The refinements that fit the
 streaming/integer model — strict NMS, half-pixel lattice, bounding-box endpoints, streaming
 hysteresis, curve rejection, border rejection — are all in the hardware (sub-pixel NMS stays
 software-only: it does not fit the judge's 128-bit envelope).</p>
+
+<p><b>What it costs.</b> Both realizations, side by side. The HLS core proves the streaming
+schedule (front-end II=1, one pixel per clock) but, left to instantiate a moment multiplier per
+product, spends 79 DSP blocks and 95% of the small Artix-7's LUTs on the detector alone. The
+hand-written RTL folds every product onto <b>one shared sequential multiplier</b>, collapsing
+79 DSP blocks to 14 — so the <i>complete</i> live system (detector + HDMI receive/transmit +
+overlay drawer) fits the 2009-era Spartan-6 well within budget, with every timing constraint met
+(74.8&nbsp;MHz achieved against the 74.25&nbsp;MHz pixel clock).</p>
+<table><thead><tr><th></th><th>HLS core (Artix-7 xc7a35t)</th><th>RTL system (Spartan-6 xc6slx45)</th></tr></thead><tbody>
+<tr><td>clock</td><td>100&nbsp;MHz, II=1</td><td>74.25&nbsp;MHz pixel</td></tr>
+<tr><td>slice LUTs</td><td>19,789 (95%)</td><td class="best">12,664 (46%)</td></tr>
+<tr><td>slice registers</td><td>14,684 (35%)</td><td class="best">8,813 (16%)</td></tr>
+<tr><td>occupied slices</td><td>—</td><td>4,109 (60%)</td></tr>
+<tr><td>block RAM</td><td>79 (79%)</td><td>74 RAMB16 + 26 RAMB8</td></tr>
+<tr><td>DSP blocks</td><td>79 (87%)</td><td class="best">14 (24%)</td></tr>
+<tr><td>timing</td><td>met (slack 0.02&nbsp;ns)</td><td>all met (74.8&nbsp;MHz)</td></tr>
+</tbody></table>
+<p class="sub">The RTL column is the complete design that runs on the board; block RAM is counted
+as allocated primitives (the logical footprint is ≈140&nbsp;KiB of 261&nbsp;KiB, see footer).
+The single shared multiplier is what collapses the DSP count from 79 to 14.</p>
 
 <h2>2. Honest limits: dense-frame overload</h2>
 <p>The back-end labels <i>events</i> (edge pixels), so a maximally dense row can outrun it.

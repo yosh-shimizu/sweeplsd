@@ -10,9 +10,11 @@
 
 <h1>Detection quality</h1>
 <p class="sub">Synthetic ground truth with strict one-to-one matching, geometric accuracy,
-and orientation isotropy — against genuine LSD, ED_Lib EDLines, and ELSED.</p>
+orientation isotropy, endpoint bias, and rotation/reflection repeatability — against genuine
+LSD, ED_Lib EDLines, and ELSED.</p>
 <nav><a href="index.html">Algorithm</a> <a href="benchmarks.html">Speed</a>
 <a href="evaluation.html"><b>Quality</b></a> <a href="vp_evaluation.html">Vanishing points</a>
+<a href="applications.html">Applications</a>
 <a href="fpga.html">FPGA</a> <a href="https://github.com/ysmz334/sweeplsd">Repository</a></nav>
 
 <h2>1. Protocol</h2>
@@ -111,13 +113,65 @@ fall into four-fold-symmetric azimuth families rather than spreading uniformly.<
 <figure><img src="assets/iso/iso_circles_elsed.png"><figcaption>ELSED: 1443 segments</figcaption></figure>
 </div>
 
-<h2>5. Honest summary</h2>
+<h2>5. Endpoint accuracy: a small, correctable extent bias</h2>
+<p>SweepLSD's raw endpoints are a <b>deterministic ≈1.7–2.0 px short</b> of the true tip — on
+<b>100% of the free endpoints measured</b>, at every orientation. The cause is the
+endpoint-candidate rule: a candidate is confirmed only where <i>two</i> candidates are
+consecutive, and the <i>inner</i> one is kept (branch points likewise), so the recovered tip
+lands one major-axis pixel step inside the last edge pixel. Converted to arc length that
+predicts an <b>angle-dependent</b> offset — largest near 45°, smallest at the axes.</p>
+<table><thead><tr><th>detector</th><th>signed inward endpoint offset (px, + = short)</th><th>% of tips short</th></tr></thead><tbody>
+<tr><td class="sweep">SweepLSD</td><td>+2.02</td><td>100%</td></tr>
+<tr><td>ELSED</td><td class="best">−0.72</td><td>26%</td></tr>
+<tr><td>EDLines (ED_Lib)</td><td>−0.31</td><td>35%</td></tr>
+<tr><td>LSD</td><td class="best">+0.09</td><td>56%</td></tr>
+</tbody></table>
+<p>A least-squares fit confirms the mechanism exactly:
+<code>offset = 1.75 / max(|cosθ|,|sinθ|) − 0.00</code> — the zero intercept means it is purely
+multiplicative, the shape the rule predicts. Applying that angle-based correction drops the
+residual to a median <b>0.32 px</b>: the bias is not only deterministic but <b>correctable</b>.</p>
+<p><b>This is an extent bias, not a direction bias</b> (measured by projecting the endpoints onto
+the fitted axis). The segment is a touch short but points the same way, so vanishing-point and
+attitude accuracy — which use direction only — are unaffected. Only tasks that need absolute
+endpoint position (metrology, junction detection, line-based metric reconstruction) need to
+apply the correction above, or snap endpoints to nearby gradient maxima.</p>
+<div class="gallery">
+<figure><img src="assets/eval/endpoint_angle.png"><figcaption>offset vs angle (fit matches the mechanism) + per-detector distribution</figcaption></figure>
+<figure><img src="assets/eval/endpoint_tipcrop.png"><figcaption>tip close-ups: only SweepLSD lands systematically inside the true tip (green +)</figcaption></figure>
+</div>
+
+<h2>6. Repeatability under rotation and reflection</h2>
+<p>A detector should return the same segments — geometrically transformed — when the image is
+rotated by a multiple of 90° or mirrored. Tested directly: each of 24 photographs is transformed
+by the eight-element dihedral group (horizontal/vertical flips, 180° and ±90° rotations), each
+detector runs on every version, its segments are mapped back to the original frame, and we report
+the fraction of the original segments reproduced within 6 px and 5° (median over the 24 photos).</p>
+<table><thead><tr><th>transform</th><th>SweepLSD</th><th>ELSED</th><th>EDLines</th><th>LSD</th></tr></thead><tbody>
+<tr><td>horizontal flip</td><td class="best">97.7</td><td>70.2</td><td>79.5</td><td>74.3</td></tr>
+<tr><td>vertical flip</td><td class="best">96.5</td><td>83.2</td><td>82.1</td><td>74.0</td></tr>
+<tr><td>180° rotation</td><td class="best">96.4</td><td>68.1</td><td>74.0</td><td>69.3</td></tr>
+<tr><td>+90° rotation</td><td class="best">97.1</td><td>72.9</td><td>81.2</td><td>74.0</td></tr>
+<tr><td>−90° rotation</td><td class="best">96.9</td><td>74.1</td><td>77.9</td><td>74.9</td></tr>
+<tr><td><b>median</b></td><td class="best"><b>96.9</b></td><td>72.2</td><td>79.5</td><td>73.4</td></tr>
+</tbody></table>
+<p><b>SweepLSD is the most repeatable of the four</b> — 96.9% against 72–80%. The reason is
+structural: the dihedral transforms permute the horizontal and vertical axes among themselves,
+and SweepLSD's deterministic, integer, two-direction pipeline maps consistently under that
+permutation. The greedy anchor-drawing and region-growing of the edge-based detectors follow
+contours in a scan order the transform changes, so they re-segment differently. Detect time is
+nearly orientation-invariant (portrait / 90° frames run ~5–7% slower — more but shorter rows), and
+peak memory does not change with orientation at a fixed resolution (the input image dominates the
+footprint, and SweepLSD's O(width) scratch is far below it).</p>
+
+<h2>7. Honest summary</h2>
 <table><thead><tr><th>axis</th><th style="text-align:left">leader</th></tr></thead><tbody>
 <tr><td>F-max (every noise level, strict 1-to-1)</td><td style="text-align:left">ELSED</td></tr>
 <tr><td>per-segment geometric accuracy (esp. direction)</td><td style="text-align:left" class="sweep">SweepLSD</td></tr>
 <tr><td>low-contrast / soft-edge coverage</td><td style="text-align:left">LSD, EDLines (orientation-coherence linking)</td></tr>
 <tr><td>orientation isotropy on straight-line probes</td><td style="text-align:left">ELSED, LSD (SweepLSD's two-way direction quantisation costs it here)</td></tr>
 <tr><td>curve rejection (only straight lines)</td><td style="text-align:left" class="sweep">SweepLSD</td></tr>
+<tr><td>rotation / reflection repeatability</td><td style="text-align:left" class="sweep">SweepLSD (96.9% vs 72–80%, §6)</td></tr>
+<tr><td>absolute endpoint position (raw)</td><td style="text-align:left">LSD (SweepLSD's ≈1.8 px extent bias is deterministic and correctable, §5)</td></tr>
 <tr><td>speed, memory, latency</td><td style="text-align:left" class="sweep">SweepLSD (one-pass)</td></tr>
 <tr><td>indoor vanishing points (fair protocol)</td><td style="text-align:left" class="sweep">SweepLSD (<a href="vp_evaluation.html">details</a>)</td></tr>
 </tbody></table>
