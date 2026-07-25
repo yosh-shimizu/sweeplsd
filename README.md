@@ -20,14 +20,16 @@ state, and each segment is finalized the moment its last pixel passes
 
 ## Headline numbers
 
-Full-HD (1920×1080) grayscale photos, i7-8700K, AVX2, single thread. All
-baselines are the **genuine author implementations** (von Gioi's LSD; Suárez
-et al.'s ELSED; Akinlar & Topal's ED_Lib EDLines), built with the same
-compiler and the same ISA target as SweepLSD.
+The public **LIU4K-v2** corpus (CC0) — 123 structure-rich Building/Street photos,
+natively 4K–6K, downscaled to Full-HD (1920×1080) grayscale — on an i7-8700K,
+AVX2, single thread. All baselines are the **genuine author implementations**
+(von Gioi's LSD; Suárez et al.'s ELSED; Akinlar & Topal's ED_Lib EDLines), built
+with the same compiler and the same ISA target as SweepLSD.
 
 | | SweepLSD (one-pass) | ELSED | EDLines (ED_Lib) | LSD |
 |---|---|---|---|---|
-| Median time / frame | **~8.8 ms** | ~25 ms | ~34 ms | ~205 ms |
+| Median time / frame | **~11 ms** | ~51 ms | ~58 ms | ~278 ms |
+| …speed vs SweepLSD | **1×** | 4.6× | 5.2× | 25× |
 | Memory for intermediates | **O(width)** | O(pixels) | O(pixels) | O(pixels) |
 | Segment direction error (synthetic GT) | **0.01–0.04°** | 0.07–0.11° | 0.14° | 0.03–0.13° |
 | F-max, clean–low noise (σ0–5) | 0.963–0.966 | **0.979–0.986** | 0.953–0.954 | 0.92–0.93 |
@@ -77,16 +79,16 @@ below (verified float-for-float across GCC / Clang / clang-cl / MSVC, and over
 
 | toolchain | ABI | one-pass | multi-pass | vs GCC 15.2 |
 |---|---|---|---|---|
-| **GCC 15.2 / 16.1** | MinGW | **~8.8 ms** | ~12 ms | 1.00× |
-| GCC 8.1 (2018) | MinGW | ~11.4 ms | ~15 ms | 1.26× |
-| Clang 22.1 (llvm-mingw) | MinGW | ~12 ms | ~15 ms | 1.34× |
-| **clang-cl 22.1** | MSVC | **~12 ms** | ~15 ms | 1.36× |
-| MSVC 19.34 (`cl`) | MSVC | ~37 ms | ~40 ms | 4.2× |
+| **GCC 15.2 / 16.1** | MinGW | **~11 ms** | ~15 ms | 1.00× |
+| GCC 8.1 (2018) | MinGW | ~14 ms | ~18 ms | 1.26× |
+| Clang 22.1 (llvm-mingw) | MinGW | ~15 ms | ~20 ms | 1.34× |
+| **clang-cl 22.1** | MSVC | **~15 ms** | ~20 ms | 1.36× |
+| MSVC 19.34 (`cl`) | MSVC | ~47 ms | ~61 ms | 4.2× |
 
 Only MSVC's own `cl` is far off, and **one kernel** accounts for it: the
-endpoint-candidate 5×5 ring test, whose median cost over the 150-photo corpus is
-1.7 ms under GCC 15.2 and 5.0 ms under Clang but **23 ms under `cl`**, where it
-alone is 60% of the frame (`cl` also loses 3× on gradient and 2× on edge). It is
+endpoint-candidate 5×5 ring test, which is cheap under GCC 15.2 and Clang but
+**dominates under `cl`**, where it alone is the majority of the frame (`cl` also
+loses on the gradient and edge stages). It is
 not an ISA-flag problem — `-march=native` changes nothing. `cl` is the only
 toolchain here that will not vectorize that kernel: it inlines it, then emits
 fully scalar code, and it declines a reduced 25-load probe too, so this is a
