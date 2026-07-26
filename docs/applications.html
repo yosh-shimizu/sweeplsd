@@ -53,20 +53,43 @@ Middle/right: detect time and peak memory — SweepLSD's O(width) working set ho
 </div>
 
 <p><b>Real-time horizon lock.</b> As an end-to-end demonstration we stabilise a 4K forward flight
-through the Pavilion (camera roll up to ±22°) by counter-rotating each frame with SweepLSD's
-per-frame attitude estimate. The horizontal error has median <b>0.63°</b> over 180 frames and
-0.28° on the extreme-roll frame; the estimated horizon tracks the true one to well under a degree.
-The O(width), low-latency front end is what makes per-frame 4K attitude affordable in the first
-place.</p>
+through the Pavilion (camera rolling ±20° and pitching ±12°) by counter-rotating and re-centring
+each frame with SweepLSD's per-frame attitude estimate (hybrid estimator, resolution-scaled
+minimum length, light temporal EMA α&nbsp;=&nbsp;0.65). The attitude error has median <b>0.69°</b>
+over the 150-frame flight: the estimated horizon (amber) tracks the true one (blue) to well under
+a degree while the raw feed tilts and pitches. The O(width), low-latency front end is what makes
+per-frame 4K attitude affordable in the first place.</p>
 
-<div class="gallery" style="grid-template-columns:1fr">
-<figure><img src="assets/apps/attitude_horizon.jpg"><figcaption>One 4K frame: the SweepLSD-estimated
-horizon (red) against ground truth (blue), nearly coincident.</figcaption></figure>
-</div>
+<video controls preload="metadata" style="width:100%;border-radius:8px;border:1px solid #dde1e7;margin-top:12px"
+  src="https://github.com/user-attachments/assets/f7b2e99d-a74c-4737-abac-45b5eecabd07"></video>
+<p class="sub" style="margin-top:4px">RAW | STABILIZED: detected segments (green), estimated
+horizon (amber), ground truth (blue); the attitude-indicator gizmo shows the estimated roll and
+pitch in real time.
+(<a href="https://github.com/user-attachments/assets/f7b2e99d-a74c-4737-abac-45b5eecabd07">direct video link</a>
+if the embed does not play.)</p>
+
+<p><b>Content-independent cost, made visible.</b> The same 4K flythrough, run frame by frame
+against ELSED: both detectors see the same images and return essentially the same lines, but as
+the camera moves and the number of visible segments varies 2.2×, ELSED's per-frame detect time
+swings between 66 and 126&nbsp;ms (σ&nbsp;=&nbsp;15.3&nbsp;ms) while SweepLSD holds a flat
+26–35&nbsp;ms band (σ&nbsp;=&nbsp;3.0&nbsp;ms, median 3.0× faster) near the 33&nbsp;ms /
+30&nbsp;fps budget line — at 22 vs 148&nbsp;MB peak memory. A frame deadline can be
+<i>guaranteed</i>, not just met on average.</p>
+
+<video controls preload="metadata" style="width:100%;border-radius:8px;border:1px solid #dde1e7;margin-top:12px"
+  src="https://github.com/user-attachments/assets/fba86929-e314-47c3-bb3e-3b62e9740b16"></video>
+<p class="sub" style="margin-top:4px">Same scene, same lines — the per-frame latency band below
+draws itself as the flight progresses.
+(<a href="https://github.com/user-attachments/assets/fba86929-e314-47c3-bb3e-3b62e9740b16">direct video link</a>
+if the embed does not play.)</p>
+
 <p class="sub">ELSED's apparent 4K accuracy dip is a parameter-calibration artifact (its defaults
 target 640×480); at its design minimum length the 4K accuracy returns to parity, and the memory
 and speed gaps are independent of it. Speed ratios against the OpenCV-based baselines depend on
-the OpenCV build by ±20–30%; all four detectors here use one toolchain.</p>
+the OpenCV build by ±20–30%; all four detectors here use one toolchain. In the latency video,
+per-frame times are the minimum over repeated runs (8 for SweepLSD, 3 for ELSED, same protocol)
+to strip OS scheduling jitter, and the vendored ELSED needed a one-line NaN guard to survive
+tilted 4K frames — an upstream bug that leaves its detections unchanged.</p>
 
 <h2>2. Real data: EuRoC and TUM-VI</h2>
 <p>Synthesis isolates the resolution effect; two real visual-inertial datasets check that the
@@ -134,8 +157,10 @@ labeller recovers as a chain — a candidate lane/curve extractor built by <i>re
 engineering-drawing line extraction; (iv) room-layout and wireframe estimation reuse the same
 short-but-accurate-segment support that wins the indoor vanishing-point study.</div>
 
-<footer>Attitude scenes rendered from vector ground truth (Blender); EuRoC MAV and TUM-VI used
-under their respective terms (single-frame, monocular, geometry-only, no temporal smoothing).
+<footer>Attitude scenes rendered in Blender with exact camera-pose ground truth — Classroom by
+Christophe Seux (CC0), Barcelona Pavilion by Hamza Cheggour / "eMirage" (CC-BY); EuRoC MAV and
+TUM-VI used under their respective terms (single-frame, monocular, geometry-only, no temporal
+smoothing).
 Estimator and harnesses are the same detector-agnostic ones used on the
 <a href="vp_evaluation.html">vanishing-point</a> page. Measured on i7-8700K, GCC 15.2.</footer>
 </div></body></html>
