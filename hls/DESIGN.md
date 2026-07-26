@@ -26,8 +26,9 @@ that is why phase 2 is hand RTL.
   pixel clock for the Atlys demo).
 - Image size: width **compile-time max 1920** (line-buffer depth), runtime `width ≤ 1920`,
   `height` free-running (row counter).
-- Algorithm scope: **baseline first** (`Params{}` thesis behaviour), improved()'s
-  integer-friendly additions staged in later (see "Improved-mode notes").
+- Algorithm scope: both configurations — the 2014 baseline
+  (`Params::original2014()`) and the shipped improved configuration (see
+  "Improved-mode status").
 
 ## Pipeline structure
 
@@ -51,7 +52,8 @@ from the II=1 domain entirely.
 
 Worst-case input (pathological dense edge map) throttles via FIFO backpressure and
 stalls the front-end; the FIFO is sized for ~1 row of events (2^11). Real images never
-approach this (measure in co-sim; report the high-water mark).
+approach this (co-sim measured: even a full-amplitude-noise frame runs at ~6 cycles/px,
+absorbed by backpressure — see the phase-1 results).
 
 ### Stage lag budget (same as software)
 
@@ -100,8 +102,8 @@ cycle each.
   x: u11 }                                   // y is implicit: back-end row counter
 ```
 
-Baseline needs nothing else. (Improved mode appends `power: u15, dir: u1, delta: i5`
-for hysteresis + sub-pixel moments — reserved, see below.)
+Baseline needs nothing else; the improved configuration adds the hysteresis `strong`
+bit (the sub-pixel `delta` was not adopted — see "Improved-mode status").
 
 Endpoint-candidate pixels must be in the stream even though they are not labelled:
 the labelling neighbourhood test reads the *feature values* of all 8 neighbours (for
@@ -129,8 +131,9 @@ an O(width) per-row clear would drag the engine back to pixel rate):
 | touched lists ×3 | 3 × 1024 × 10 b ≈ 3.8 KiB | scavenger input (labels first-touched per row) |
 | segment output | streamed out | no on-chip segment DB needed (AXIS out) |
 
-Measured over the full Waseda corpus (all 150 FullHD photos) + dense-noise
-stress images (tb stats): high-water **380 live labels** of 1023, find-chain
+Measured over the full test corpus (150 real Full-HD photographs; not
+redistributed) + dense-noise stress images (tb stats): high-water **380 live
+labels** of 1023, find-chain
 depth **1** (the original's single-level connect was empirically sufficient —
 our full union-find matches the golden model exactly anyway), zero free-list
 underflows. All 160 parity runs bit-exact end to end.
@@ -202,8 +205,7 @@ software's `sqrt` disappears in the exact reformulation. Widths are large (T² u
 ~2^110 worst-case) but this unit runs once per *segment* (~10³/frame), so it is a
 multi-cycle sequential multiplier datapath, not a pipeline stage. (Boundary caveat:
 software compares via `double`; exact-tie inputs could theoretically differ — the
-parity test must confirm zero mismatches on the corpus, else mirror the same
-comparison in the golden harness.)
+parity runs confirm zero mismatches over the corpus.)
 
 ### Segment output
 
@@ -217,7 +219,7 @@ burst):
   min_y:u11, min_y_x:u11, max_y:u11, max_y_x:u11 }     //     points
 ```
 
-The bbox extreme points (v2c improvement f) are always tracked and emitted;
+The bbox extreme points (improvement f) are always tracked and emitted;
 the host finalisation decides whether to use them (`endpoint_from_bbox`:
 endpoints = projection extremes among these four points + the two contacts).
 In the label table they cost 7 fields (max_y == last_row since rows arrive in
@@ -236,29 +238,31 @@ BRAM ≈ 21 KiB (front-end) + ~37 KiB (back-end) ≈ **58 KiB** — inside the t
 `x²`/`x·y` products in the accumulate path (few), judgment multipliers (time-shared).
 No frame buffer anywhere — that is the point.
 
-## Improved-mode notes (staged later)
+## Improved-mode status
 
-Integer-clean and stream-compatible, in adoption order:
-- (a) strict NMS tie-break — DONE (v2c step 1). NOTE: in RTL write it as
-  parallel comparators muxed by strict (`strict ? > : >=`), NOT `Pm + s` —
-  the serial +1 adder broke the front-end critical chain (74.25 MHz).
-- (j) lattice half-shift — DONE (v2c step 1): host-side +0.5 on finished
-  segments; on the board, the overlay draw rounding ((c+1)>>1, clamped).
-- (c) sub-pixel NMS — parabola vertex `8(Pp−Pm)/den` needs one small divider (or
-  16-entry reciprocal LUT + multiply) in the front-end; moments then accumulate in
-  1/16-px units ⇒ +4 fractional bits on Sx/Sy, +8 on Sxx/Syy/Sxy.
-- (d) hysteresis — per-label `strong_cnt` (u10) + power in the event record. The
-  *adaptive* low threshold's decayed float histogram must be re-expressed in fixed
-  point (bins ×256, decay = `v − (v>>8)`) — **not** bit-identical to the float
-  software; either mirror the fixed-point form in software (preferred, then re-tune
-  nothing: behaviour change is sub-LSB) or pin `hysteresis_adaptive=false` in HW mode.
-- (f) bbox endpoints — DONE (v2c step 2): 7 extra fields in the hot entry
-  (+77 b), strict-compare updates parallel to the moment adders; see the
+Everything in the shipped improved configuration except (c) is implemented in
+the hardware and three-way (SW/HLS/RTL) bit-exact — the RTL forms and their
+rationale are in `../rtl/DESIGN.md`:
+
+- (a) strict NMS tie-break. NOTE: in RTL write it as parallel comparators
+  muxed by strict (`strict ? > : >=`), NOT `Pm + s` — the serial +1 adder
+  broke the front-end critical chain (74.25 MHz).
+- (j) lattice half-shift — host-side +0.5 on finished segments; on the board,
+  the overlay draw rounding ((c+1)>>1, clamped).
+- (d) adaptive hysteresis — per-label `strong_cnt` + a strong bit in the event
+  path; the adaptive low threshold is integer-only (bins ×256, decay
+  `v − (v>>8)`), mirrored back into the software so all three stay bit-exact.
+- (f) bbox endpoints — 7 extra fields in the hot entry (+77 b),
+  strict-compare updates parallel to the moment adders; see the
   segment-output section above.
-- (h) perp-spread — second integer inequality on the same moments:
-  `N²·λmin_norm ≤ (N·th)²`-style cross-multiplied form; same judgment unit.
-- (i) border margin — comparators on x/y. Free.
-- (5) link_collinear stays host-side (float geometry, unbounded active list).
+- (h) perp-spread — second integer inequality on the same moments; same
+  judgment unit.
+- (i) border margin — bounding-box comparators at record emission.
+
+Host-side only:
+- (c) sub-pixel NMS — 1/16-px moment accumulation overflows the judge's
+  128-bit envelope; not ported (analysis in `../rtl/DESIGN.md`).
+- (5) link_collinear — float geometry, unbounded active list.
 
 ## Repository layout
 
@@ -281,7 +285,7 @@ Reports archived in `reports/` (csynth + cosim).
 
 - **C simulation**: the full parity testbench (10 synthetic + optional corpus
   images) passes with 0 errors under the Vitis compiler — same bit-exact
-  standard as the host build (all 160 runs incl. the 150 Waseda FullHD photos).
+  standard as the host build (all 160 runs incl. the 150 Full-HD corpus photos).
 - **Synthesis**: timing met (slack +0.02 ns @ 10 ns, 1.0 ns uncertainty);
   **BRAM 79/100 (79 %), DSP 79/90 (87 %), LUT 19,789/20,800 (95 %), FF 35 %**.
   Every front-end pixel loop achieves **II=1**; `endpointCore` folds into the
@@ -300,7 +304,6 @@ Reports archived in `reports/` (csynth + cosim).
   tier, replaces "ML Standard" from 2026.1) license file must exist before the
   tool launches — `XILINXD_LICENSE_FILE` → `~/.Xilinx/Xilinx.lic`.
 
-Remaining for phase 2 (Atlys / Spartan-6 LX45, hand Verilog): the shared
-judgment multiplier as designed here already fits the DSP48A1 budget thinking
-(one 128-bit product time-multiplexed); HDMI in/out at 720p60 or 1080p30; ISE
-14.7 toolchain.
+Phase 2 (the Atlys / Spartan-6 board port, hand Verilog) is complete —
+architecture, the shared judgment multiplier, and the live-demo story are in
+`../rtl/DESIGN.md`.

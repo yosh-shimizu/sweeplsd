@@ -68,9 +68,10 @@ closes part of that gap: with it, F-max rises to <b>0.973</b> on clean scenes an
 <p>Per-segment geometry is SweepLSD's strongest axis: the scatter-moment line fit over
 every member pixel plus sub-pixel NMS plus the half-pixel lattice correction give it the
 best direction accuracy of the field — 2–5× better than ELSED and an order of magnitude
-better than ED_Lib. (Two frame conventions were fixed during this work: the detector's own
-−0.5 px lattice bias, and a +0.5 px sampling mismatch in the evaluator's GT renderer that
-had been taxing <i>every</i> detector.)</p>
+better than ED_Lib. (Frame conventions are calibrated on both sides: the detector's
+half-pixel lattice correction is a shipped refinement, and the evaluator's GT renderer is
+verified to the same sampling convention — a half-pixel mismatch there would tax
+<i>every</i> detector.)</p>
 
 <h2>4. Orientation isotropy &amp; curve rejection</h2>
 <p>Synthetic probes (1024×1024): a 72-sector Siemens star, a zone plate, concentric

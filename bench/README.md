@@ -17,5 +17,3 @@ cmake -S . -B build -DSWEEPLSD_BUILD_BENCH=ON
 Note: building with `SWEEPLSD_BUILD_BENCH=ON` compiles and links AGPL-licensed
 code into the benchmark executables (only). The `sweeplsd` library itself and
 all default build targets remain MIT-clean.
-
-(Harness and fetch scripts land before v1.0 — tracked in the repo plan.)

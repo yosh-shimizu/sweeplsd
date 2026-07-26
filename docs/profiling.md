@@ -80,7 +80,7 @@ out to `addr2line`):
 ```powershell
 $env:Path = "E:\dev\claude\tools\mingw64-15.2\bin;" + $env:Path
 .\build_profile\line_profiler.exe .\build_profile\profile_driver.exe `
-    E:\dataset\WasedaDataset\IMGP0942.png --iters 400
+    path\to\photo.png --iters 400
 ```
 
 Output: a **per-file rollup**, the **hottest source lines** (`file:line` +
@@ -104,12 +104,9 @@ sample %), and the **hottest functions** (demangled). Example (dense image):
     ...
 ```
 
-The rollup is flat by design — no single line dominates. Two shapes are worth
-recognising if you are used to older profiles of this code: the label table no
-longer reallocates (the bounded pool made `stl_uninitialized.h` / `new` vanish
-from the top; they were ~12 % combined), and the labelling **row scan** no
-longer shows up (v3.0.4's word skip took it from 47 % of `labeling.cpp` to
-13 %, leaving the per-pixel body as the labeller's real cost).
+The rollup is flat by design — no single line dominates: the label table never
+reallocates (bounded pool) and the labelling row scan is word-skipped, so the
+per-pixel body is the labeller's real cost.
 
 Notes:
 - `--iters` sets sample count (~1 kHz × runtime): 400 iters ≈ a few thousand
@@ -135,7 +132,7 @@ Same sampled data in the VS GUI. VS wants a PDB;
   `cv2pdb64.exe` into `tools/cv2pdb/`.
 - **Profile**: VS 2022 → **Debug → Performance Profiler** (Alt + F2) → target
   **Executable** `build_profile\profile_driver_vs.exe`, arguments e.g.
-  `E:\dataset\WasedaDataset\IMGP0942.png --iters 400` → tick **CPU Usage** →
+  `path\to\photo.png --iters 400` → tick **CPU Usage** →
   **Start**. In the report, **Show External Code** OFF, sort by **Self CPU**,
   **double-click** a hot function to open its source with a per-line heat column.
 

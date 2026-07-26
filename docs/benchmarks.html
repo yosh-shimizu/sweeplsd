@@ -47,7 +47,7 @@ compiler as everything else means it is not the stock Windows OpenCV: it carries
 code. That is worth stating, because it sounds like a handicap on the baselines.</p>
 <p>Measured head-to-head, it is not. Running the same ELSED against the stock IPP-enabled,
 PPL-threaded OpenCV and against this one, interleaved image-by-image over an earlier 150-photo
-corpus (median of 11 runs each), the build used here comes out <b>15% faster</b> — 27.2 ms
+Full-HD test corpus (median of 11 runs each), the build used here comes out <b>15% faster</b> — 27.2 ms
 against 31.1 ms median, and faster on all 150 images. The compiler's effect on ELSED's own scalar
 edge-drawing dominates whatever IPP contributes to its two preprocessing calls. The baselines
 are therefore represented by the faster of the two builds available, not the slower one.</p></div>
@@ -91,7 +91,7 @@ latency floor of one frame period (33 ms) plus its processing time.</p>
 <h2>4. How predictable is the frame time?</h2>
 <p>A median is not a frame budget. A detector that averages 27 ms but occasionally takes 68 ms
 will drop frames at 30 fps; one that never leaves a narrow band will not. The chart below divides
-each detector's 150 per-image times by <em>its own</em> median, so the four distributions can be
+each detector's 123 per-image times by <em>its own</em> median, so the four distributions can be
 compared on shape alone — how far the frame time wanders from typical, regardless of how fast
 that typical is.</p>
 
@@ -142,7 +142,7 @@ that sits at 3–4% and is dominated by the operating system rather than the det
 be attributed to any of them here.</p></div>
 
 <h2>5. Where the time goes</h2>
-<p>Per-stage profile (<code>oplsd_profile</code>, median over LIU4K-v2 Full-HD photos,
+<p>Per-stage profile (<code>sweeplsd_profile</code>, median over LIU4K-v2 Full-HD photos,
 multi-pass driver so stages are separable; shipped configuration):</p>
 <table><thead><tr><th>stage</th><th>ms</th><th>share</th></tr></thead><tbody>
 <tr><td>1. gaussian</td><td>1.7</td><td>13%</td></tr>
@@ -183,7 +183,7 @@ further ground on the gradient and edge stages too. This is not an ISA-flag prob
 reduced probe of the same shape with only 25 loads and one comparison. Rewriting around that
 would mean the hand-written intrinsics this project deliberately avoids, so it is recorded as
 a limit of that vectorizer. <b>clang-cl keeps the MSVC ABI and recovers the speed</b> — 3.0×
-faster than <code>cl</code> on 150 of 150 images, and within 1.4× of GCC. Every toolchain
+faster than <code>cl</code> on every image tested, and within 1.4× of GCC. Every toolchain
 here compiles cleanly, passes every test, and returns exactly the same segments.</p>
 <p>Earlier revisions of this page reported Clang at ~33 ms (3.8×) and called the
 gap open work. It was: Clang's inliner was keeping the ring test as a real call — one call

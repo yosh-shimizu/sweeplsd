@@ -85,17 +85,11 @@ below (verified float-for-float across GCC / Clang / clang-cl / MSVC, and over
 | **clang-cl 22.1** | MSVC | **~15 ms** | ~20 ms | 1.36× |
 | MSVC 19.34 (`cl`) | MSVC | ~47 ms | ~61 ms | 4.2× |
 
-Only MSVC's own `cl` is far off, and **one kernel** accounts for it: the
-endpoint-candidate 5×5 ring test, which is cheap under GCC 15.2 and Clang but
-**dominates under `cl`**, where it alone is the majority of the frame (`cl` also
-loses on the gradient and edge stages). It is
-not an ISA-flag problem — `-march=native` changes nothing. `cl` is the only
-toolchain here that will not vectorize that kernel: it inlines it, then emits
-fully scalar code, and it declines a reduced 25-load probe too, so this is a
-limit of that vectorizer rather than something the kernel can be rewritten
-around without the hand-written intrinsics this project deliberately avoids.
-Using clang-cl keeps the MSVC ABI and recovers the speed. All toolchains build
-cleanly, pass every test, and return exactly the same segments; see
+Only MSVC's own `cl` is far off: it declines to vectorize one load-bearing
+kernel (the endpoint-candidate 5×5 ring test) — a limit of its auto-vectorizer,
+not of the ISA flags or the kernel. Using **clang-cl** keeps the MSVC ABI and
+recovers the speed. All toolchains build cleanly, pass every test, and return
+exactly the same segments; the full analysis is in
 [`docs/benchmarks.html`](https://ysmz334.github.io/sweeplsd/benchmarks.html) §6.
 
 ## How it works
