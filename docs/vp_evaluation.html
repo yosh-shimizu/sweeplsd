@@ -70,19 +70,20 @@ evaluated with <b>selection and evaluation on separate data</b> (split-half
 cross-validation within each dataset: variants selected by median error on one half,
 scored on the other, test halves pooled):</p>
 <table><thead><tr><th>dataset</th><th>detector</th><th>median err (CV)</th><th>&lt;2°</th><th>&lt;5°</th><th>detect ms</th><th>VP est. ms</th><th>total ms</th></tr></thead><tbody>
-<tr><td rowspan="4">NYU (indoor), split-half CV</td><td class="sweep">SweepLSD</td><td class="best">6.08°</td><td class="best">33.2%</td><td class="best">48.6%</td><td class="best">1.5</td><td>2.8</td><td class="best">4.4</td></tr>
-<tr><td>ELSED</td><td>7.67°</td><td>32.4%</td><td>47.1%</td><td>4.0</td><td>2.1</td><td>6.2</td></tr>
-<tr><td>LSD</td><td>7.87°</td><td>29.2%</td><td>46.4%</td><td>27.1</td><td>3.7</td><td>30.9</td></tr>
-<tr><td>EDLines (ED_Lib)</td><td>8.09°</td><td>30.5%</td><td>45.7%</td><td>5.8</td><td>3.8</td><td>9.7</td></tr>
-<tr><td rowspan="4">York Urban (outdoor), split-half CV</td><td>ELSED</td><td class="best">0.82°</td><td>84.3%</td><td>96.1%</td><td>5.5</td><td>4.0</td><td>9.5</td></tr>
-<tr><td>LSD</td><td>0.83°</td><td class="best">93.1%</td><td>96.1%</td><td>32.0</td><td>3.9</td><td>36.3</td></tr>
-<tr><td class="sweep">SweepLSD</td><td>0.94°</td><td>85.3%</td><td>95.1%</td><td class="best">1.8</td><td>3.5</td><td class="best">5.3</td></tr>
-<tr><td>EDLines (ED_Lib)</td><td>1.00°</td><td>89.2%</td><td class="best">98.0%</td><td>7.3</td><td>4.7</td><td>12.2</td></tr>
+<tr><td rowspan="4">NYU (indoor), split-half CV</td><td class="sweep">SweepLSD</td><td class="best">6.08°</td><td class="best">33.2%</td><td class="best">48.6%</td><td class="best">1.5</td><td>2.1</td><td class="best">3.7</td></tr>
+<tr><td>ELSED</td><td>7.67°</td><td>32.4%</td><td>47.1%</td><td>4.0</td><td>1.6</td><td>5.7</td></tr>
+<tr><td>LSD</td><td>7.87°</td><td>29.2%</td><td>46.4%</td><td>27.1</td><td>3.0</td><td>30.1</td></tr>
+<tr><td>EDLines (ED_Lib)</td><td>8.09°</td><td>30.5%</td><td>45.7%</td><td>5.8</td><td>2.9</td><td>8.9</td></tr>
+<tr><td rowspan="4">York Urban (outdoor), split-half CV</td><td>ELSED</td><td class="best">0.82°</td><td>84.3%</td><td>96.1%</td><td>5.5</td><td>2.8</td><td>8.4</td></tr>
+<tr><td>LSD</td><td>0.83°</td><td class="best">93.1%</td><td>96.1%</td><td>32.0</td><td>3.7</td><td>35.7</td></tr>
+<tr><td class="sweep">SweepLSD</td><td>0.94°</td><td>85.3%</td><td>95.1%</td><td class="best">1.8</td><td>2.4</td><td class="best">4.2</td></tr>
+<tr><td>EDLines (ED_Lib)</td><td>1.00°</td><td>89.2%</td><td class="best">98.0%</td><td>7.3</td><td>3.5</td><td>11.0</td></tr>
 </tbody></table>
 <p class="sub">Time columns: medians at 640×480, all detectors built with one toolchain and
 measured in one window, interleaved image-by-image (detection: median of 15 runs; VP
 estimation: median of 5 runs of each image's cross-validated pick, timed on the exact
-segments behind the accuracy columns).</p>
+segments behind the accuracy columns, with the estimator's scoring stage AVX2-vectorized —
+output verified bit-identical to the scalar code over all 68,100 menu evaluations).</p>
 <p><b>Indoors SweepLSD wins every fair protocol — now including against ELSED</b> — once the
 estimator counts each line as one vote (length-weighted voting lets long clutter contours
 hijack the search; SweepLSD's support is many short-but-accurate lines). The optional linker
@@ -106,13 +107,18 @@ non-SweepLSD: ELSED at 6.53°). The two protocols agree on the ordering. Either 
 stays 4.6× / 5.2× / 25× faster than ELSED / ED_Lib / LSD upstream of the estimator at
 Full-HD — and 2.6× / 3.8× / 17.6× on the 640×480 frames this study actually runs on
 (table above). Because the task is the vanishing points, not the segments, the table also
-prices the downstream: at 640×480 the estimation stage costs 2.1–4.7&nbsp;ms for
-<i>every</i> detector — more than SweepLSD's own 1.5–1.8&nbsp;ms detection — so end-to-end
-SweepLSD is still the fastest pipeline on both datasets, but the margin over ELSED
-compresses to 1.4–1.8×: at this resolution the shared estimator, not the detector, bounds
-the frame time. At high resolution the picture inverts — estimation stays a few
-milliseconds (it scales with surviving lines, not pixels) while detection grows with pixel
-count (6–8&nbsp;ms of estimation against 30–580&nbsp;ms of detection at 4K on the
+prices the downstream. The estimation stage was profiled and optimized for this
+measurement (its former hotspot, the candidates×lines inlier scoring, is AVX2-vectorized
+with bit-identical output); even so it costs 1.6–3.7&nbsp;ms per frame at 640×480 — the
+remaining work is the multi-start refinement's serial per-seed eigensolves, which cannot
+be batched without changing the result — and for the fastest detector that still exceeds
+SweepLSD's own 1.5–1.8&nbsp;ms detection. End-to-end SweepLSD is the fastest pipeline on
+both datasets (3.7&nbsp;ms on NYU against ELSED's 5.7), but the margin over ELSED
+compresses to 1.5–2.0×: at this resolution the shared estimator, not the detector, bounds
+the frame time — a property of the task, not of an unoptimized implementation. At high
+resolution the picture inverts — estimation stays a few milliseconds (5–6&nbsp;ms at 4K;
+it scales with surviving lines, not pixels) while detection grows with pixel count
+(30–580&nbsp;ms of detection at 4K on the
 <a href="applications.html">applications page</a>).</div>
 
 <div class="note"><b>Reproduce it.</b> Build with <code>-DSWEEPLSD_BUILD_BENCH=ON</code>;
@@ -138,12 +144,19 @@ internally-consistent, same-run data.</div>
 <div class="note"><b>Time columns added 2026-08.</b> Detection was re-measured with all
 four detectors compiled by the same GCC 15.2, one process per image, interleaved
 image-by-image in a single window (the cross-window comparison trap). The re-generated
-segments reproduce the accuracy table exactly for SweepLSD and LSD (deterministic), to
+segments reproduce the accuracy table exactly for SweepLSD (deterministic), to
 float rounding for ELSED (≤2×10⁻⁵&nbsp;px), and to ±1–2 segments per frame for ED_Lib,
 whose edge chaining is build-sensitive (its NYU CV median moves 8.09°→8.95° between
 compiler builds of the same source and OpenCV version — the ranking is unaffected;
 the accuracy columns keep the stored segments' published values, and its estimation
-time is measured on those same stored segments).</div>
+time is measured on those same stored segments). LSD's own double-precision detection
+is also build-sensitive at the last-bit level: recompiling it with a different GCC
+generation moves its cross-validated York Urban median between 0.83° and 0.94° (ELSED's
+and SweepLSD's by ≤0.02°; every NYU median reproduces to 0.01°) — so LSD's outdoor lead
+over SweepLSD is within build jitter, the stable outdoor read is ELSED ≈0.1° ahead of
+both, and the indoor ordering is unaffected. The estimator's scoring stage was
+AVX2-vectorized for the timing study, verified bit-identical to the scalar code over all
+68,100 menu evaluations, both datasets.</div>
 
 <footer>Datasets: York Urban Database (Denis, Elder &amp; Estrada 2008) and NYU-VP
 (Kluger et al. 2020, from NYU Depth v2) — please obtain them from their official sources;

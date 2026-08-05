@@ -44,9 +44,9 @@ figure — holds a peak resident set of <b>≈22&nbsp;MB</b> against ELSED's and
 (6.4→21.7&nbsp;MB) as the pixel count grows 16×, and most of the 22&nbsp;MB is the input image
 itself — the working set is O(width), now shown at the task level and at a resolution real ground
 truth cannot reach. Downstream cost does not change this picture: the Manhattan-frame estimation
-that consumes the segments adds 6–8&nbsp;ms at 4K for <i>every</i> detector (it scales with the
+that consumes the segments adds 5–6&nbsp;ms at 4K for <i>every</i> detector (it scales with the
 number of surviving lines, not with pixels), so end-to-end the ratios compress only slightly —
-SweepLSD ≈36&nbsp;ms against ELSED's ≈89&nbsp;ms, 2.5× instead of 2.7×.</p>
+SweepLSD ≈36&nbsp;ms against ELSED's ≈88&nbsp;ms, 2.4× instead of 2.7×.</p>
 
 <div class="gallery" style="grid-template-columns:1fr">
 <figure><img src="assets/apps/attitude_vs_resolution.png"><figcaption>Barcelona Pavilion, 540p–4K
@@ -61,8 +61,8 @@ each frame with SweepLSD's per-frame attitude estimate (hybrid estimator, resolu
 minimum length, light temporal EMA α&nbsp;=&nbsp;0.65). The attitude error has median <b>0.69°</b>
 over the 150-frame flight: the estimated horizon (amber) tracks the true one (blue) to well under
 a degree while the raw feed tilts and pitches. The complete per-frame compute — detection
-<i>plus</i> attitude estimation — has a median of 33.3&nbsp;ms (detection 32.0, estimation 1.2 on
-the ≈90 length-filtered lines; worst frame 42.3&nbsp;ms), so the whole loop, not just the front
+<i>plus</i> attitude estimation — has a median of 33.2&nbsp;ms (detection 32.0, estimation 1.1 on
+the ≈90 length-filtered lines; worst frame 42.8&nbsp;ms), so the whole loop, not just the front
 end, runs at the 30&nbsp;fps frame budget in the median on a single desktop core. Only rendering the stabilised
 output falls outside this figure: it is presentation, identical for every detector, and in a
 deployed system (a gimbal or crop window) it is not on the estimate's critical path.</p>

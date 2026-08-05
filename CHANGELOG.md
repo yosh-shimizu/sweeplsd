@@ -13,17 +13,36 @@
   sort comparator and per-seed scan (~10× faster); comparison outcomes are
   unchanged, so every CSV row is bit-identical (verified against the
   published row CSVs).
+- **Manhattan estimator: scoring stage AVX2-vectorized, output
+  bit-identical.** The `O(candidates × lines)` inlier tests — the estimator's
+  dominant cost — now run 4 lines per AVX2 iteration over an SoA repack of
+  the line normals, with the same mul+fma rounding as the compiled scalar
+  dot, NaN padding instead of a scalar tail, and a bitwise-fixed-point early
+  exit in the triad refinement. Applied to `bench/vp_bestcfg.cpp` and
+  `examples/manhattan_frame.cpp` (scalar fallback kept for non-AVX2/FMA
+  builds, including MSVC). Verified bit-identical over all 68,100 menu
+  evaluations on both datasets plus 30 images of the shipping estimator.
+  VGA estimation drops to 1.6–3.7 ms per frame; what remains is the
+  multi-start refinement's serial per-seed eigensolves.
 - **Docs: end-to-end task times published.** `vp_evaluation.html` §4 gains
   detect / VP est. / total columns (640×480 medians; one toolchain, one
-  measurement window, detectors interleaved image-by-image): at VGA the
-  estimation stage (2.1–4.7 ms) exceeds SweepLSD's own detection
-  (1.5–1.8 ms), so the end-to-end margin over ELSED compresses to 1.4–1.8×,
-  while at 4K the picture inverts (6–8 ms estimation against 30–580 ms
-  detection). `applications.html` now reports the 4K horizon lock's complete
-  per-frame compute (detection 32.0 + estimation 1.2 = 33.3 ms median) and
-  prices the downstream in the resolution sweep. ED_Lib's build sensitivity
-  is disclosed (±1–2 segments per frame between compiler builds of the same
-  source and OpenCV version; NYU CV median 8.09°→8.95°, ranking unaffected).
+  measurement window, detectors interleaved image-by-image): even with the
+  vectorized estimator, at VGA the estimation stage (1.6–3.7 ms) exceeds
+  SweepLSD's own detection (1.5–1.8 ms), so the end-to-end margin over ELSED
+  compresses to 1.5–2.0×, while at 4K the picture inverts (5–6 ms estimation
+  against 30–580 ms detection). `applications.html` now reports the 4K
+  horizon lock's complete per-frame compute (detection 32.0 + estimation
+  1.1 = 33.2 ms median) and prices the downstream in the resolution sweep.
+- **Build-sensitivity disclosures.** ED_Lib: ±1–2 segments per frame between
+  compiler builds of the same source and OpenCV version (NYU CV median
+  8.09°→8.95°, ranking unaffected). LSD: last-bit detection differences
+  between GCC generations move its cross-validated York Urban median between
+  0.83° and 0.94° (ELSED's and SweepLSD's medians move ≤0.02°; every NYU
+  median reproduces to 0.01°), so LSD's outdoor lead over SweepLSD is within
+  build jitter. Root cause of the discovery: the 2026-07 fair-protocol
+  harness had been silently built by GCC 8.1 through a stale compiler path
+  in an old CMake cache; the time columns and these disclosures re-anchor
+  the harness to GCC 15.2.
 
 ## v3.0.4 (2026-07-17)
 

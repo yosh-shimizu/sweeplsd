@@ -31,10 +31,15 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <string>
 #include <vector>
+
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
 
 #include "sweeplsd/io.hpp"
 #include "sweeplsd/sweeplsd.hpp"
@@ -99,6 +104,100 @@ int axisScore(const std::vector<CalLine>& lines, const Vec3& d, double tau) {
     return s;
 }
 
+// ---- Hot scoring kernels (SoA + AVX2) --------------------------------------
+// The O(candidates x lines) inlier tests dominate the estimator's cost, so
+// the line normals are repacked once per estimate into structure-of-arrays
+// form and tested 4 lines per AVX2 iteration. The vector dot uses the same
+// mul+fma chain the compiler emits for the scalar dot(), and votes are unit
+// counts, so scores — and therefore the estimated frame — are bit-identical
+// to the scalar path (which remains for non-AVX2/FMA builds, including MSVC).
+struct LinesSoA {
+    std::vector<double> nx, ny, nz;
+    int n;  // padded to a multiple of 4; NaN pad normals are never inliers
+    explicit LinesSoA(const std::vector<CalLine>& lines) {
+        int real = (int)lines.size();
+        n = (real + 3) & ~3;
+        const double qnan = std::numeric_limits<double>::quiet_NaN();
+        nx.assign(n, qnan);
+        ny.assign(n, qnan);
+        nz.assign(n, qnan);
+        for (int i = 0; i < real; ++i) {
+            nx[i] = lines[i].n.x;
+            ny[i] = lines[i].n.y;
+            nz[i] = lines[i].n.z;
+        }
+    }
+};
+
+#if defined(__AVX2__) && defined(__FMA__)
+
+int axisScoreSoA(const LinesSoA& L, const Vec3& d, double tau) {
+    const __m256d dx = _mm256_set1_pd(d.x), dy = _mm256_set1_pd(d.y),
+                  dz = _mm256_set1_pd(d.z), vt = _mm256_set1_pd(tau),
+                  sgn = _mm256_set1_pd(-0.0);
+    int s = 0;
+    for (int i = 0; i < L.n; i += 4) {
+        __m256d t = _mm256_fmadd_pd(_mm256_loadu_pd(&L.nz[i]), dz,
+                    _mm256_fmadd_pd(_mm256_loadu_pd(&L.ny[i]), dy,
+                    _mm256_mul_pd(_mm256_loadu_pd(&L.nx[i]), dx)));
+        s += __builtin_popcount(_mm256_movemask_pd(
+            _mm256_cmp_pd(_mm256_andnot_pd(sgn, t), vt, _CMP_LT_OQ)));
+    }
+    return s;
+}
+
+// Count of lines within tau of ANY of the triad's axes (identical predicate
+// to "min over axes of |n.d| < tau").
+int frameScoreSoA(const LinesSoA& L, const std::array<Vec3, 3>& D, double tau) {
+    const __m256d vt = _mm256_set1_pd(tau), sgn = _mm256_set1_pd(-0.0);
+    __m256d dx[3], dy[3], dz[3];
+    for (int a = 0; a < 3; ++a) {
+        dx[a] = _mm256_set1_pd(D[a].x);
+        dy[a] = _mm256_set1_pd(D[a].y);
+        dz[a] = _mm256_set1_pd(D[a].z);
+    }
+    int s = 0;
+    for (int i = 0; i < L.n; i += 4) {
+        __m256d nx = _mm256_loadu_pd(&L.nx[i]), ny = _mm256_loadu_pd(&L.ny[i]),
+                nz = _mm256_loadu_pd(&L.nz[i]);
+        int m = 0;
+        for (int a = 0; a < 3; ++a) {
+            __m256d t = _mm256_fmadd_pd(nz, dz[a],
+                        _mm256_fmadd_pd(ny, dy[a], _mm256_mul_pd(nx, dx[a])));
+            m |= _mm256_movemask_pd(
+                _mm256_cmp_pd(_mm256_andnot_pd(sgn, t), vt, _CMP_LT_OQ));
+        }
+        s += __builtin_popcount(m);
+    }
+    return s;
+}
+
+#else  // scalar fallback over the SoA views (NaN pads always fail the test)
+
+int axisScoreSoA(const LinesSoA& L, const Vec3& d, double tau) {
+    int s = 0;
+    for (int i = 0; i < L.n; ++i) {
+        double t = L.nx[i] * d.x + L.ny[i] * d.y + L.nz[i] * d.z;
+        if (std::fabs(t) < tau) ++s;
+    }
+    return s;
+}
+
+int frameScoreSoA(const LinesSoA& L, const std::array<Vec3, 3>& D, double tau) {
+    int s = 0;
+    for (int i = 0; i < L.n; ++i) {
+        double best = 1e9;
+        for (const Vec3& d : D) {
+            double t = L.nx[i] * d.x + L.ny[i] * d.y + L.nz[i] * d.z;
+            best = std::min(best, std::fabs(t));
+        }
+        if (best < tau) ++s;
+    }
+    return s;
+}
+
+#endif
+
 // Re-fit one axis as the direction most perpendicular to its inlier normals.
 Vec3 refitAxis(const std::vector<CalLine>& lines, const Vec3& d, double tau) {
     double S[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
@@ -123,16 +222,25 @@ std::array<Vec3, 3> orthonormalize(Vec3 a, Vec3 b) {
 }
 
 std::array<Vec3, 3> refineTriad(const std::vector<CalLine>& lines,
+                                const LinesSoA& L,
                                 std::array<Vec3, 3> tri, double tau) {
     for (int iter = 0; iter < 8; ++iter) {
         std::array<Vec3, 3> R{refitAxis(lines, tri[0], tau),
                               refitAxis(lines, tri[1], tau),
                               refitAxis(lines, tri[2], tau)};
         int sc[3];
-        for (int a = 0; a < 3; ++a) sc[a] = axisScore(lines, R[a], tau);
+        for (int a = 0; a < 3; ++a) sc[a] = axisScoreSoA(L, R[a], tau);
         int order[3] = {0, 1, 2};
         std::sort(order, order + 3, [&](int a, int b) { return sc[a] > sc[b]; });
-        tri = orthonormalize(R[order[0]], R[order[1]]);
+        std::array<Vec3, 3> next = orthonormalize(R[order[0]], R[order[1]]);
+        // Bitwise fixed point: another iteration would recompute exactly this
+        // triad, so stopping early cannot change the result.
+        bool same = true;
+        for (int a = 0; a < 3 && same; ++a)
+            same = next[a].x == tri[a].x && next[a].y == tri[a].y &&
+                   next[a].z == tri[a].z;
+        if (same) return next;
+        tri = next;
     }
     return tri;
 }
@@ -159,8 +267,10 @@ bool estimateManhattan(const std::vector<CalLine>& lines, double tau,
     }
     if (cand.empty()) return false;
 
+    const LinesSoA L(lines);
+
     std::vector<int> sc(cand.size());
-    for (std::size_t i = 0; i < cand.size(); ++i) sc[i] = axisScore(lines, cand[i], tau);
+    for (std::size_t i = 0; i < cand.size(); ++i) sc[i] = axisScoreSoA(L, cand[i], tau);
     std::vector<int> idx(cand.size());
     std::iota(idx.begin(), idx.end(), 0);
     std::sort(idx.begin(), idx.end(), [&](int a, int b) { return sc[a] > sc[b]; });
@@ -193,13 +303,8 @@ bool estimateManhattan(const std::vector<CalLine>& lines, double tau,
             Vec3 t = std::fabs(d1.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
             d2 = normalize(cross(d1, t));
         }
-        std::array<Vec3, 3> tri = refineTriad(lines, orthonormalize(d1, d2), tau);
-        double total = 0;
-        for (const CalLine& l : lines) {
-            double best = 1e9;
-            for (const Vec3& d : tri) best = std::min(best, std::fabs(dot(l.n, d)));
-            if (best < tau) total += 1.0;
-        }
+        std::array<Vec3, 3> tri = refineTriad(lines, L, orthonormalize(d1, d2), tau);
+        double total = frameScoreSoA(L, tri, tau);
         if (total > best_total) { best_total = total; out = tri; found = true; }
     }
     return found;
