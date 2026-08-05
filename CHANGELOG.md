@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- **Fair-protocol VP study now prices the downstream too.**
+  `sweeplsd_vp_bestcfg` gains `--time-runs R`: each (image, detector, variant)
+  row also records the downstream cost (calibrate + Manhattan estimation) as
+  the median of R runs in a new `est_ms` CSV column (off by default — output
+  unchanged). `tools/vp_bestcfg_cv.py` pools `est_ms` under each image's
+  cross-validated pick and, with `--det-dir method=DIR` (per-image runner
+  files, `<count> <ms>` header), reports detect / VP-est. / total medians.
+  The menu harness's estimator no longer recomputes axis scores inside its
+  sort comparator and per-seed scan (~10× faster); comparison outcomes are
+  unchanged, so every CSV row is bit-identical (verified against the
+  published row CSVs).
+- **Docs: end-to-end task times published.** `vp_evaluation.html` §4 gains
+  detect / VP est. / total columns (640×480 medians; one toolchain, one
+  measurement window, detectors interleaved image-by-image): at VGA the
+  estimation stage (2.1–4.7 ms) exceeds SweepLSD's own detection
+  (1.5–1.8 ms), so the end-to-end margin over ELSED compresses to 1.4–1.8×,
+  while at 4K the picture inverts (6–8 ms estimation against 30–580 ms
+  detection). `applications.html` now reports the 4K horizon lock's complete
+  per-frame compute (detection 32.0 + estimation 1.2 = 33.3 ms median) and
+  prices the downstream in the resolution sweep. ED_Lib's build sensitivity
+  is disclosed (±1–2 segments per frame between compiler builds of the same
+  source and OpenCV version; NYU CV median 8.09°→8.95°, ranking unaffected).
+
 ## v3.0.4 (2026-07-17)
 
 - **Labelling performance: Full-HD one-pass ~12.2 → ~11.5 ms (−5 %), output

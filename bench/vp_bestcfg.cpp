@@ -23,9 +23,13 @@
 //   sweeplsd_vp_bestcfg <manifest.txt> --out rows.csv
 //       [--methods imp,lsd,edreal,elsed] [--edreal-dir D] [--elsed-dir D]
 //       [--seed-cap-s N] [--vprior-mode M]     (reconstruction trial knobs)
+//       [--time-runs R]  also time the downstream (calibrate + Manhattan
+//                        estimation) per row as the median of R runs and add
+//                        an est_ms CSV column (0 = off, output unchanged)
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -182,8 +186,25 @@ bool estimateManhattan(const std::vector<CalLine>& lines, double tau,
         return s;
     };
 
-    std::sort(cand.begin(), cand.end(),
-              [&](const Vec3& a, const Vec3& b) { return axisScore(a) > axisScore(b); });
+    // Score each candidate once and sort/select through the cache. The original
+    // harness recomputed axisScore inside the sort comparator and the per-seed
+    // scan below (~40x the work); comparison outcomes are identical, so the
+    // selected seeds — and every CSV row — are bit-identical to the old code.
+    std::vector<double> cs(cand.size());
+    for (std::size_t i = 0; i < cand.size(); ++i) cs[i] = axisScore(cand[i]);
+    std::vector<int> idx(cand.size());
+    for (std::size_t i = 0; i < cand.size(); ++i) idx[i] = (int)i;
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) { return cs[a] > cs[b]; });
+    {
+        std::vector<Vec3> cand2(cand.size());
+        std::vector<double> cs2(cand.size());
+        for (std::size_t i = 0; i < cand.size(); ++i) {
+            cand2[i] = cand[idx[i]];
+            cs2[i] = cs[idx[i]];
+        }
+        cand.swap(cand2);
+        cs.swap(cs2);
+    }
     std::vector<Vec3> seeds;
     for (const Vec3& d : cand) {
         bool dup = false;
@@ -213,10 +234,9 @@ bool estimateManhattan(const std::vector<CalLine>& lines, double tau,
     for (const Vec3& d1 : seeds) {
         Vec3 d2{0, 0, 0};
         double best2 = -1;
-        for (const Vec3& d : cand) {
-            if (std::fabs(dot(d, d1)) > 0.26) continue;
-            double s = axisScore(d);
-            if (s > best2) { best2 = s; d2 = d; }
+        for (std::size_t ci = 0; ci < cand.size(); ++ci) {
+            if (std::fabs(dot(cand[ci], d1)) > 0.26) continue;
+            if (cs[ci] > best2) { best2 = cs[ci]; d2 = cand[ci]; }
         }
         if (best2 < 0) {
             Vec3 t = std::fabs(d1.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
@@ -272,12 +292,29 @@ struct Variant {
     bool vprior;     // "V": vertical prior seed
 };
 
+// Median-of-R wall-clock of fn(), ms. The estimator is deterministic (fixed
+// rng seed), so repeats redo identical work; the median rejects OS-scheduling
+// spikes without the fastest-run bias of a min.
+template <class F>
+double timeMedianMs(int runs, F&& fn) {
+    std::vector<double> t;
+    t.reserve(runs);
+    for (int i = 0; i < runs; ++i) {
+        auto a = std::chrono::steady_clock::now();
+        fn();
+        auto b = std::chrono::steady_clock::now();
+        t.push_back(std::chrono::duration<double, std::milli>(b - a).count());
+    }
+    std::sort(t.begin(), t.end());
+    return t[t.size() / 2];
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     std::string manifest_path, out_path, edreal_dir, elsed_dir,
         methods = "lsd";
-    int seed_cap_s = 20, vprior_mode = 1;
+    int seed_cap_s = 20, vprior_mode = 1, time_runs = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--out" && i + 1 < argc) out_path = argv[++i];
@@ -286,11 +323,13 @@ int main(int argc, char** argv) {
         else if (a == "--elsed-dir" && i + 1 < argc) elsed_dir = argv[++i];
         else if (a == "--seed-cap-s" && i + 1 < argc) seed_cap_s = std::atoi(argv[++i]);
         else if (a == "--vprior-mode" && i + 1 < argc) vprior_mode = std::atoi(argv[++i]);
+        else if (a == "--time-runs" && i + 1 < argc) time_runs = std::atoi(argv[++i]);
         else if (!a.empty() && a[0] != '-') manifest_path = a;
     }
     if (manifest_path.empty() || out_path.empty()) {
         std::printf("Usage: %s <manifest.txt> --out rows.csv [--methods imp,implink,lsd,edreal,elsed]\n"
-                    "       [--edreal-dir D] [--elsed-dir D] [--seed-cap-s N] [--vprior-mode M]\n",
+                    "       [--edreal-dir D] [--elsed-dir D] [--seed-cap-s N] [--vprior-mode M]\n"
+                    "       [--time-runs R]\n",
                     argv[0]);
         return 1;
     }
@@ -331,7 +370,7 @@ int main(int argc, char** argv) {
 
     std::ofstream o(out_path);
     if (!o) { std::printf("Error: cannot write %s\n", out_path.c_str()); return 1; }
-    o << "img,method,variant,err\n";
+    o << (time_runs > 0 ? "img,method,variant,err,est_ms\n" : "img,method,variant,err\n");
     char buf[256];
 
     int done = 0;
@@ -363,6 +402,15 @@ int main(int argc, char** argv) {
 
         for (const M& m : ms) {
             std::vector<CalLine> base = calibrate(m.segs, f, cx, cy, min_len);
+            // Downstream (segments -> frame) = calibrate + estimateManhattan.
+            // calibrate is variant-independent; time it once per method.
+            double cal_ms = 0;
+            if (time_runs > 0)
+                cal_ms = timeMedianMs(time_runs, [&] {
+                    volatile size_t sink =
+                        calibrate(m.segs, f, cx, cy, min_len).size();
+                    (void)sink;
+                });
             for (const Variant& v : kMenu) {
                 std::vector<CalLine> cl = base;
                 if (v.unit) for (CalLine& c : cl) c.w = 1.0;
@@ -372,8 +420,18 @@ int main(int argc, char** argv) {
                                        v.vprior ? vprior_mode : 0, frame))
                     continue;
                 FrameError e = frameError(frame, r.gt);
-                std::snprintf(buf, sizeof(buf), "%s,%s,%s,%.6f\n",
-                              r.name.c_str(), m.key, v.name, e.mean_deg);
+                if (time_runs > 0) {
+                    double est_ms = cal_ms + timeMedianMs(time_runs, [&] {
+                        std::array<Vec3, 3> fr;
+                        estimateManhattan(cl, tau, v.strong ? seed_cap_s : 10,
+                                          v.vprior ? vprior_mode : 0, fr);
+                    });
+                    std::snprintf(buf, sizeof(buf), "%s,%s,%s,%.6f,%.4f\n",
+                                  r.name.c_str(), m.key, v.name, e.mean_deg, est_ms);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%s,%s,%s,%.6f\n",
+                                  r.name.c_str(), m.key, v.name, e.mean_deg);
+                }
                 o << buf;
             }
         }
