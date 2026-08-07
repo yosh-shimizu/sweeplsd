@@ -257,7 +257,6 @@ rationale are in `../rtl/DESIGN.md`:
   segment-output section above.
 - (h) perp-spread — second integer inequality on the same moments; same
   judgment unit.
-- (i) border margin — bounding-box comparators at record emission.
 
 Host-side only:
 - (c) sub-pixel NMS — 1/16-px moment accumulation overflows the judge's

@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- **Fair-protocol VP study now prices the downstream too.**
+- **BREAKING: the judgment-stage border rejection (improvement (i),
+  `Params::border_margin`) is removed** — from the public API, the C++ judge,
+  the HLS C model (`sweeplsdBackend` / `sweeplsdCore` lose the `border_margin`
+  argument; golden-vector `_meta.txt` drops its column), and the RTL
+  (`backend.v` / `sweep_core.v` lose the `border` port). The test was
+  structurally unable to fire: the edge stage's outer-ring exclusion
+  (`edge_border_margin` = 3) already confines every edge pixel — hence every
+  label's bounding box — to `[3, w−4] × [3, h−4]`, exactly the region the
+  bbox test admits. Confirmed empirically before removal (border_margin 0 vs 3
+  bit-identical over 1,610 images, both drivers) and again across the removal
+  (pre- vs post-removal outputs bit-identical over 1,519 images, both drivers
+  × shipped and original2014 configurations). Detection output is unchanged;
+  `Params::original2014()` behaves identically.
   `sweeplsd_vp_bestcfg` gains `--time-runs R`: each (image, detector, variant)
   row also records the downstream cost (calibrate + Manhattan estimation) as
   the median of R runs in a new `est_ms` CSV column (off by default — output

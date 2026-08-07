@@ -104,7 +104,6 @@ the 2014 thesis implementation's behaviour, so any row can be reproduced by turn
 <tr><td>streaming hysteresis</td><td style="text-align:left">low extraction threshold + per-label strong-pixel requirement; the low threshold adapts to the image noise floor (O(1) state)</td><td style="text-align:left">recall ↑ on clean images without flooding noisy ones</td></tr>
 <tr><td>endpoints from projection extremes</td><td style="text-align:left">bounding-box corners projected on the fitted axis</td><td style="text-align:left">robust when a label has &gt;2 endpoint contacts</td></tr>
 <tr><td>curve rejection</td><td style="text-align:left">absolute bound on the perpendicular RMS spread</td><td style="text-align:left">circles/arcs rejected by design (see the isotropy page)</td></tr>
-<tr><td>border margin</td><td style="text-align:left">drop segments hugging the image frame</td><td style="text-align:left">belt-and-suspenders on top of the outer-3&nbsp;px edge exclusion (which already zeroes the 2×2-gradient border ring)</td></tr>
 <tr><td>half-pixel lattice shift</td><td style="text-align:left">the 2×2 gradient lives on pixel <i>corners</i>; output is shifted +0.5 px (canonical LSD applies the same correction)</td><td style="text-align:left">systematic −0.5 px bias → 0; lateral error 0.92→0.12 px</td></tr>
 </tbody></table>
 <p>All refinements preserve the streaming / O(width) property. One <b>optional</b> feature is

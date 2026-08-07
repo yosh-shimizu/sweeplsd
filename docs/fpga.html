@@ -42,8 +42,8 @@ gate as the software:</p>
 including 1920×1080 photographs — all 150 photographs of the project's Full-HD test corpus
 match segment-for-segment in the hardware configuration. The refinements that fit the
 streaming/integer model — strict NMS, half-pixel lattice, bounding-box endpoints, streaming
-hysteresis, curve rejection, border rejection — are all in the hardware (sub-pixel NMS stays
-software-only: it does not fit the judge's 128-bit envelope).</p>
+hysteresis, curve rejection — are all in the hardware (sub-pixel NMS stays software-only: it
+does not fit the judge's 128-bit envelope).</p>
 
 <p><b>What it costs.</b> Both realizations, side by side. The HLS core proves the streaming
 schedule (front-end II=1, one pixel per clock) but, left to instantiate a moment multiplier per

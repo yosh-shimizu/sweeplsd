@@ -369,14 +369,6 @@ struct Labeler::Impl {
                                  : params.pixel_num_th;
         if (L.pix_num < admit_th) return;
         if (params.use_hysteresis && int(L.strong_cnt) < params.hysteresis_strong_min) return;
-        // (i) border margin: drop a segment whose bounding box reaches within
-        // border_margin px of the frame (the 2x2 gradient bias fringes the image
-        // edge). A pure integer bbox test on the label's own extremes, so it is
-        // trivially bit-exact across SW / HLS / RTL.
-        if (params.border_margin > 0 && L.min_x != INT_MAX &&
-            (L.min_x < params.border_margin || L.max_x >= width - params.border_margin ||
-             L.min_y < params.border_margin || L.max_y >= height - params.border_margin))
-            return;
 
         // Centroid from the (weighted) moments; W == pix_num when unweighted.
         double W = L.w_sum;

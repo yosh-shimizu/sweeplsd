@@ -82,8 +82,6 @@ int tcount[3];                         //   consumed by the scavenger at row r+2
 int g_width, g_height, g_pix_th;       // frame parameters
 bool g_hyst_on;                        // (d) hysteresis gate active
 int g_hyst_strong_min;                 //   reject labels with fewer strong pixels
-int g_border;                          // (i) border margin: skip labelling within
-                                       //   this many px of the frame (0 = off)
 int g_mps_2sq;                         // (h) curve reject: 2*max_perp_spread^2 as an
                                        //   integer (0 = off; 2 for the default mps=1)
 
@@ -207,14 +205,6 @@ void judgeAndEmit(hls::stream<SegmentRecord>& out, const LabelState& L, int sx,
     if (int(L.pix_num) < g_pix_th) return;
     // (d) hysteresis gate: a segment must contain enough strong pixels.
     if (g_hyst_on && int(L.strong_cnt) < g_hyst_strong_min) return;
-    // (i) border margin: drop a segment whose bounding box reaches within
-    // g_border px of the frame (the 2x2 gradient bias fringes the image edge).
-    // A pure integer bbox test on the record's own extremes (max_y == last_row),
-    // so it is trivially bit-exact across SW / HLS / RTL.
-    if (g_border > 0 &&
-        (int(L.min_x) < g_border || int(L.max_x) >= g_width - g_border ||
-         int(L.min_y) < g_border || int(L.last_row) >= g_height - g_border))
-        return;
     const wide_t ma = mulw(L.pix_num, L.x_sq_sum) - mulw(L.x_sum, L.x_sum);
     const wide_t mb = mulw(L.pix_num, L.xy_sum) - mulw(L.x_sum, L.y_sum);
     const wide_t mc = mulw(L.pix_num, L.y_sq_sum) - mulw(L.y_sum, L.y_sum);
@@ -431,13 +421,12 @@ void momentMaxReset() { g_mmax = MomentMax(); }
 
 void sweeplsdBackend(hls::stream<Event>& events, hls::stream<SegmentRecord>& out,
                      int width, int height, int pixel_num_th, const HystCfg& hyst,
-                     int border_margin, int mps_2sq) {
+                     int mps_2sq) {
     g_width = width;
     g_height = height;
     g_pix_th = pixel_num_th;
     g_hyst_on = hyst.on;
     g_hyst_strong_min = hyst.strong_min;
-    g_border = border_margin;
     g_mps_2sq = mps_2sq;
     fl_head = 0;
     fl_count = kMaxLabels - 1;  // ids 1..kMaxLabels-1; 0 = "no label"
@@ -491,12 +480,12 @@ event_loop:
 
 void sweeplsdCore(hls::stream<std::uint8_t>& src, hls::stream<SegmentRecord>& out,
                   int width, int height, int power_th, bool strict, int pixel_num_th,
-                  const HystCfg& hyst, int border_margin, int mps_2sq) {
+                  const HystCfg& hyst, int mps_2sq) {
 #pragma HLS DATAFLOW
     static hls::stream<Event> ev;
 #pragma HLS STREAM variable = ev depth = 2048
     sweeplsdFrontend(src, ev, width, height, power_th, strict, hyst);
-    sweeplsdBackend(ev, out, width, height, pixel_num_th, hyst, border_margin, mps_2sq);
+    sweeplsdBackend(ev, out, width, height, pixel_num_th, hyst, mps_2sq);
 }
 
 }  // namespace sweeplsd_hls

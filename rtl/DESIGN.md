@@ -97,10 +97,10 @@ the FIFO.
 ## The hardware configuration
 
 The RTL "improved" configuration is **(a) strict NMS + (j) half-pixel shift +
-(f) bbox endpoints + (d) adaptive hysteresis + (h) max-perp-spread +
-(i) border margin** — all six three-way (SW/HLS/RTL) bit-exact. (c) sub-pixel
-NMS remains a SW/HLS-level refinement (rationale below). (a), (j) and (f)
-translate directly; (d), (h) and (i) have hardware-shaped forms:
+(f) bbox endpoints + (d) adaptive hysteresis + (h) max-perp-spread** — all
+five three-way (SW/HLS/RTL) bit-exact. (c) sub-pixel NMS remains a
+SW/HLS-level refinement (rationale below). (a), (j) and (f) translate
+directly; (d) and (h) have hardware-shaped forms:
 
 ### (d) Adaptive hysteresis
 
@@ -120,29 +120,19 @@ histogram is global state that cannot self-clear through the flush rows, so
 `frame_start` clears it; each frame cold-starts exactly like a fresh
 `detect()` (guarded by a 2-frame Full-HD regression).
 
-### (h) Max-perp-spread + (i) border margin
+### (h) Max-perp-spread
 
-Both are **once-per-segment judge-level rejections** — no per-pixel or
-labelling change — so both fold into the existing back-end at essentially
-zero cost.
-
-- **(h) curve rejection.** A curved arc bows off its chord, inflating the
-  smaller eigenvalue of the *normalised* covariance; the aspect-ratio test
-  alone misses short low-curvature arcs. SW rejects when
-  `ev_min = ½(T−R)/N² > max_perp_spread²` (default 1). This is done sqrt-free
-  **inside the existing 128-bit judge**: with `A := T − 2·mps²·N²`, reject iff
-  `A > 0 && A² > R²`, reusing the aspect test's `T` and `R²`. In
-  `judge_unit.v` it is two extra products time-multiplexed onto the same
-  shared multiplier — a handful more cycles on the already-off-critical-path
-  judge; unlike (c), it does **not** grow the datapath.
-- **(i) border margin.** The 2×2 gradient biases the very edge of the frame,
-  so a ring of spurious segments traces the border. Defined as a
-  **bounding-box rejection**: drop a segment whose bbox reaches within
-  `border` (=3) px of the frame — a pure integer compare on the record's own
-  extremes, applied at record emission in `backend.v`. *(A per-pixel "skip
-  labelling border pixels" form is incompatible with the RTL's
-  `Interior ⇒ labelled` invariant; the bbox form removes the identical frame
-  artifacts and is used uniformly in SW/HLS/RTL.)*
+A **once-per-segment judge-level rejection** — no per-pixel or labelling
+change — so it folds into the existing back-end at essentially zero cost.
+A curved arc bows off its chord, inflating the smaller eigenvalue of the
+*normalised* covariance; the aspect-ratio test alone misses short
+low-curvature arcs. SW rejects when
+`ev_min = ½(T−R)/N² > max_perp_spread²` (default 1). This is done sqrt-free
+**inside the existing 128-bit judge**: with `A := T − 2·mps²·N²`, reject iff
+`A > 0 && A² > R²`, reusing the aspect test's `T` and `R²`. In
+`judge_unit.v` it is two extra products time-multiplexed onto the same
+shared multiplier — a handful more cycles on the already-off-critical-path
+judge; unlike (c), it does **not** grow the datapath.
 
 ### (c) Sub-pixel NMS — SW/HLS reference only (out of RTL scope)
 

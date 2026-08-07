@@ -91,7 +91,7 @@ std::vector<H::SegmentRecord> runEventsRec(const std::vector<H::Event>& evs, int
     const H::HystCfg hyst{p.use_hysteresis, p.hysteresis_adaptive, p.hysteresis_low_th,
                           p.hysteresis_strong_min};
     const int mps_2sq = int(2.0 * p.max_perp_spread * p.max_perp_spread + 0.5);
-    H::sweeplsdBackend(es, rec, w, h, p.pixel_num_th, hyst, p.border_margin, mps_2sq);
+    H::sweeplsdBackend(es, rec, w, h, p.pixel_num_th, hyst, mps_2sq);
     std::vector<H::SegmentRecord> out;
     while (!rec.empty()) {
         H::SegmentRecord r = rec.read();

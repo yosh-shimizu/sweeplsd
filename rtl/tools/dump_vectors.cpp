@@ -133,12 +133,12 @@ static void dumpImage(const std::string& dir, const std::string& name,
     {
         std::FILE* f = std::fopen((base + "_meta.txt").c_str(), "w");
         // width height power_th pix_th strict hyst_on hyst_adaptive hyst_low
-        //   hyst_strong_min border_margin mps_2sq
-        std::fprintf(f, "%d %d %d %d %d %d %d %d %d %d %d\n", w, h, params.gradient_power_th,
+        //   hyst_strong_min mps_2sq
+        std::fprintf(f, "%d %d %d %d %d %d %d %d %d %d\n", w, h, params.gradient_power_th,
                      params.pixel_num_th, params.nms_strict_tiebreak ? 1 : 0,
                      params.use_hysteresis ? 1 : 0, params.hysteresis_adaptive ? 1 : 0,
                      params.hysteresis_low_th, params.hysteresis_strong_min,
-                     params.border_margin, mps_2sq);
+                     mps_2sq);
         std::fclose(f);
     }
 
@@ -184,7 +184,7 @@ static void dumpImage(const std::string& dir, const std::string& name,
     hls::stream<H::SegmentRecord> rec_s;
     H::sweeplsdCore(src_s2, rec_s, w, h, params.gradient_power_th,
                     params.nms_strict_tiebreak, params.pixel_num_th, hyst,
-                    params.border_margin, mps_2sq);
+                    mps_2sq);
     {
         // One record per line: sx sy ex ey n xs ys xss yss xys, then the (f)
         // bbox extreme points minx minxy maxx maxxy miny minyx maxy maxyx
@@ -232,7 +232,6 @@ int main(int argc, char** argv) {
         params.hysteresis_low_th = 120;
         params.hysteresis_strong_min = 3;
         params.max_perp_spread = 1.0;       // (h) curve rejection (2*mps^2 = 2)
-        params.border_margin = 3;           // (i) drop frame-edge artifacts
         suffix = "_imp";
         ++argi;
     }

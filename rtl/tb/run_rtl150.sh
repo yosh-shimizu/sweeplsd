@@ -21,7 +21,7 @@ for ev in tb/vprof/IMGP*_imp_events.hex; do
     (
         iverilog -g2005 -o "$OUT/${name}.vvp" \
             -DIMG_W=1920 -DIMG_H=1080 -DPIX_TH=15 \
-            -DHYST_ON=1 -DHYST_MIN=3 -DBORDER=3 -DMPS_2SQ=2 \
+            -DHYST_ON=1 -DHYST_MIN=3 -DMPS_2SQ=2 \
             "-DVEC=\"tb/vprof/${name}_imp\"" "-DOUT=\"$OUT/${name}\"" \
             tb/tb_burst_mon.v core/event_fifo.v core/backend.v core/judge_unit.v \
             2> "$OUT/${name}.log" &&

@@ -138,7 +138,7 @@ std::vector<LineSegment> backendSegs(const std::vector<Ev>& evs, const std::vect
     const H::HystCfg hyst{p.use_hysteresis, p.hysteresis_adaptive, p.hysteresis_low_th,
                           p.hysteresis_strong_min};
     const int mps_2sq = int(2.0 * p.max_perp_spread * p.max_perp_spread + 0.5);
-    H::sweeplsdBackend(es, rec, w, h, p.pixel_num_th, hyst, p.border_margin, mps_2sq);
+    H::sweeplsdBackend(es, rec, w, h, p.pixel_num_th, hyst, mps_2sq);
     return H::finalizeStream(rec, p.max_segments, p.endpoint_from_bbox, p.lattice_half_shift);
 }
 

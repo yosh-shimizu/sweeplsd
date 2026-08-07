@@ -138,14 +138,10 @@ struct Params {
     //     *absolute* bound (a short low-curvature arc passes the ratio test but
     //     not this). 0 = off. Once-per-segment; integer form is ev_min <= th^2.
     double max_perp_spread = 1.0;
-    // (i) border margin: reject a segment whose bounding box reaches within this
-    //     many pixels of the image frame, so the boundary artifact (the gaussian/
-    //     gradient step at the very edge gets detected as segments tracing the
-    //     frame) is dropped. An integer bbox test on the segment's own extremes,
-    //     applied once per segment at judgment (so it is bit-exact SW/HLS/RTL and
-    //     needs no per-pixel labelling change). 0 = off. (The default 3 clears
-    //     the ~2px inward bias of the 2x2 gradient on the bottom/right edge.)
-    int border_margin = 3;
+    // ((i) — a judgment-stage border rejection — was removed: the edge stage's
+    //     outer-ring exclusion above already keeps every label >= 3 px inside
+    //     the frame, so the test could never fire. Verified bit-exact with it
+    //     on and off over 1,610 images before removal.)
     // (j) gradient-lattice half-pixel correction. The 2x2 gradient operator
     //     samples the gradient at the CORNER between four pixels, i.e. at
     //     (x+0.5, y+0.5) in pixel-centre coordinates, but the moments accumulate
@@ -182,7 +178,6 @@ struct Params {
         p.use_hysteresis = false;
         p.endpoint_from_bbox = false;
         p.max_perp_spread = 0.0;
-        p.border_margin = 0;
         p.lattice_half_shift = false;
         return p;
     }

@@ -135,8 +135,8 @@ The hardware is held to the same standard as the software: the RTL is
 identical segments over the full test corpus, including 1920×1080 photos
 (SW == HLS == RTL is the standing acceptance gate). The refinements that fit the
 streaming/integer model — strict NMS, half-pixel lattice, bounding-box
-endpoints, streaming hysteresis, curve rejection, border rejection — are all in
-the hardware too.
+endpoints, streaming hysteresis, curve rejection — are all in the hardware
+too.
 
 https://github.com/user-attachments/assets/b0a95a7a-fac0-4c62-ac6a-86731b2cbbeb
 

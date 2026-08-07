@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
                             p.nms_strict_tiebreak, hyst, 3);
         hls::stream<H::SegmentRecord> rec;
         H::sweeplsdBackend(ev, rec, img.width, img.height, p.pixel_num_th, hyst,
-                           p.border_margin, mps_2sq);
+                           mps_2sq);
         while (!rec.empty()) rec.read();
         ++n_img;
     }

@@ -47,7 +47,6 @@ module sweep_core #(
     input  wire [15:0]     hyst_low,
     input  wire [17:0]     hyst_strong_min,
     input  wire [17:0]     pix_th,
-    input  wire [3:0]      border,        // (i) bbox border margin (0 = off)
     input  wire [3:0]      edge_border,   // border edge exclusion (0 = off)
     input  wire [4:0]      mps_2sq,       // (h) 2*max_perp_spread^2 (0 = off)
 
@@ -189,7 +188,7 @@ module sweep_core #(
         .clk(clk), .rst(rst || frame_start), .en(en),
         .width(width), .height(height), .pix_th(pix_th),
         .hyst_on(hyst_on), .hyst_strong_min(hyst_strong_min),
-        .border(border), .mps_2sq(mps_2sq),
+        .mps_2sq(mps_2sq),
         .ev_empty(fifo_empty), .ev_kind(fifo_front[13:12]),
         .ev_x(fifo_front[11:0]), .ev_strong(fifo_front[14]), .ev_pop(fifo_pop),
         .rec_valid(be_rec_valid),
