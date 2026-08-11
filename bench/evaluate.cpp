@@ -552,6 +552,11 @@ int main(int argc, char** argv) {
         } else {
             sweeplsd::saveSegmentVisualization(assets_dir + "/eval_ed.png", rep, runEd(rep, 10));
         }
+        if (have_elsed) {
+            std::vector<LineSegment> el;  // minlen=10 (knob index 4) on s=10, image 0
+            if (readEdRealFile(elsed_dir + "/eval_s10_im0_k4.txt", el))
+                sweeplsd::saveSegmentVisualization(assets_dir + "/eval_elsed.png", rep, el);
+        }
         if (have_mlsd) {
             std::vector<LineSegment> ml;  // score=0.10 (knob index 2) on s=10, image 0
             readMlsdFile(mlsd_dir + "/eval_s10_im0_k2.txt", ml);
@@ -604,11 +609,18 @@ int main(int argc, char** argv) {
                  "</ul>";
 
             o << "<h2>サンプル（&sigma;=10, 画像0）</h2><div class=\"gallery\">";
+            // The unsuffixed "SweepLSD" card must show the shipped configuration
+            // (eval_sweeplsd_improved.png — the image the public docs and the paper
+            // use); eval_sweeplsd.png is the original2014() baseline.
             const char* keys[][2] = {{"src", "入力（合成＋ノイズ）"}, {"gt", "Ground Truth"},
-                                     {"sweeplsd", "SweepLSD"}, {"lsd", "LSD"}, {"ed", "EDLines-style"}};
+                                     {"sweeplsd_improved", "SweepLSD"}, {"lsd", "LSD"},
+                                     {"ed", "EDLines-style"}};
             for (auto& kv : keys)
                 o << "<div class=\"card\"><img src=\"" << ar << "/eval_" << kv[0]
                   << ".png\"><h3>" << kv[1] << "</h3></div>";
+            if (have_elsed)
+                o << "<div class=\"card\"><img src=\"" << ar
+                  << "/eval_elsed.png\"><h3>ELSED</h3></div>";
             o << "</div>";
 
             o << "<h2>PR フロンティア</h2><div class=\"curves\">";
