@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v4.0.0 (2026-08-11)
 
 - **BREAKING: the judgment-stage border rejection (improvement (i),
   `Params::border_margin`) is removed** — from the public API, the C++ judge,
@@ -55,6 +55,22 @@
   harness had been silently built by GCC 8.1 through a stale compiler path
   in an old CMake cache; the time columns and these disclosures re-anchor
   the harness to GCC 15.2.
+- **Corpus-wide hardware verification is now scriptable.**
+  `rtl/tb/run_liu4k_t2.sh` runs the RTL leg of the SW==HLS==RTL
+  bit-exactness check over the benchmark corpus (per-image `tb_sweep_core`
+  parity in the hardware configuration; 123/123 images PASS, 204,759
+  records bit-exact against the software golden model).
+  `rtl/tb/run_liu4k_burst.sh` measures the event-FIFO overload limit with
+  the real back-end at 1080p30 pixel timing: at the shipped depth 2048,
+  0.481 % of corpus records are lost, confined to 2 of 123 images;
+  lossless at depth 16384.
+- **Bench: evaluation-report sample gallery fixed.** The unsuffixed
+  "SweepLSD" card showed the `original2014()` baseline render; it now shows
+  the shipped configuration (matching the public docs and paper figure),
+  and an ELSED panel (`eval_elsed.png` + gallery card) is emitted when
+  `--elsed-dir` supplies precomputed segments.
+- Repository URLs updated for the account rename `ysmz334` →
+  `yosh-shimizu` (github.io Pages links do not redirect across renames).
 
 ## v3.0.4 (2026-07-17)
 
