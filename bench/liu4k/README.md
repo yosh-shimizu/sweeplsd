@@ -1,7 +1,7 @@
 # LIU4K-v2 speed / memory / equivariance benchmark
 
 The scripts that produce the public benchmark on the
-[`docs/benchmarks.html`](https://ysmz334.github.io/sweeplsd/benchmarks.html) page.
+[`docs/benchmarks.html`](https://yosh-shimizu.github.io/sweeplsd/benchmarks.html) page.
 Everything is measured on the **LIU4K-v2** corpus, which is **CC0-licensed** and
 freely redownloadable, so the numbers are reproducible by anyone.
 

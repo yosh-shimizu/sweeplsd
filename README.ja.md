@@ -82,7 +82,7 @@ CMake パッケージとして: `find_package(sweeplsd CONFIG REQUIRED)` の後�
 カーネルをベクトル化できないことで、ISA フラグやカーネルの書き方ではなく `cl` の
 自動ベクトル化器側の限界です。**clang-cl** を使えば MSVC ABI のまま速度を回復できます。
 いずれのツールチェーンでもビルドは通り、全テストに通り、出力も完全に同一です。詳細な
-分析は [`docs/benchmarks.html`](https://ysmz334.github.io/sweeplsd/benchmarks.html) §6 を
+分析は [`docs/benchmarks.html`](https://yosh-shimizu.github.io/sweeplsd/benchmarks.html) §6 を
 参照してください。
 
 ## 仕組み
@@ -106,7 +106,7 @@ CMake パッケージとして: `find_package(sweeplsd CONFIG REQUIRED)` の後�
 既定値のまま。`Params::improved()` は旧版コード互換のエイリアスとして残置、
 既定と同一）。
 
-段ごとの図付き解説は[ドキュメント](https://ysmz334.github.io/sweeplsd/)にあります。
+段ごとの図付き解説は[ドキュメント](https://yosh-shimizu.github.io/sweeplsd/)にあります。
 
 ## 実機（FPGA）での動作
 

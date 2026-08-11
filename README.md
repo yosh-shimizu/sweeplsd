@@ -90,7 +90,7 @@ kernel (the endpoint-candidate 5×5 ring test) — a limit of its auto-vectorize
 not of the ISA flags or the kernel. Using **clang-cl** keeps the MSVC ABI and
 recovers the speed. All toolchains build cleanly, pass every test, and return
 exactly the same segments; the full analysis is in
-[`docs/benchmarks.html`](https://ysmz334.github.io/sweeplsd/benchmarks.html) §6.
+[`docs/benchmarks.html`](https://yosh-shimizu.github.io/sweeplsd/benchmarks.html) §6.
 
 ## How it works
 
@@ -115,7 +115,7 @@ thesis implementation's pipeline (the judgment thresholds keep the library
 defaults). (`Params::improved()` remains as an alias
 of the default for code written against earlier releases.)
 
-The full explanation with per-stage figures is in [the docs](https://ysmz334.github.io/sweeplsd/).
+The full explanation with per-stage figures is in [the docs](https://yosh-shimizu.github.io/sweeplsd/).
 
 ## On real hardware (FPGA)
 
