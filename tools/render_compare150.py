@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
-"""Render the 3-level comparison (pure SW / HLS-C model / RTL sim) for the
-Waseda corpus with an identical drawing style, so detection differences are
-visible and rendering differences are not.
+"""Render the 3-level comparison (pure SW / HLS-C model / RTL sim) over a corpus
+with an identical drawing style, so detection differences are visible and
+rendering differences are not.
 
-Inputs per image <name>:
-  SW : .compare150/sw/<name>.txt          x0 y0 x1 y1 (float, finalized by detect())
-  HLS: rtl/tb/vprof/<name>_imp_records.hex 18 hex fields (records; finalized here)
-  RTL: rtl/tb/rtl150/<name>_recs_out.txt   18 dec fields (records; finalized here)
+Inputs per image <name> (directories are configurable, see below):
+  SW : <SW_DIR>/<name>.txt                 x0 y0 x1 y1 (float, finalized by detect())
+  HLS: <HLS_DIR>/<name>_imp_records.hex    18 hex fields (records; finalized here)
+  RTL: <RTL_DIR>/<name>_recs_out.txt       18 dec fields (records; finalized here)
 
-Record finalization is a line-for-line port of hls/host/finalize.hpp with
-improved-mode flags (endpoint_from_bbox + lattice_half_shift), matching
-Params::improved() so all three columns show the same algorithm stage.
+Record finalization is a line-for-line port of hls/host/finalize.hpp with the
+hardware-mode flags (endpoint_from_bbox + lattice_half_shift), so all three
+columns show the same algorithm stage.
 
-Configuration note: the SW column includes sub-pixel NMS (part of
-Params::improved()); the HLS-C/RTL columns run the hardware configuration,
-which omits it. That accounts for ALL SW-vs-HLS count differences: with
-subpixel_nms=false, detect() matches the HLS-C counts on 150/150 corpus
-images (verified 2026-07-13). The RTL column is simulated with real 1080p30
-event-FIFO timing, so a saturated dense frame may shed segments.
+Configuration note: the SW column includes sub-pixel NMS (part of the shipped
+`Params{}`); the HLS-C/RTL columns run the hardware configuration, which omits
+it. That accounts for ALL SW-vs-HLS count differences: with subpixel_nms=false,
+detect() matched the HLS-C counts on every image of the 150-photo Full-HD test
+corpus used at the time (verified 2026-07-13). The RTL column is simulated with
+real 1080p30 event-FIFO timing, so a saturated dense frame may shed segments.
 
-Outputs: .compare150/render/<name>_{sw,hlsc,rtl}.png, summary.csv, index.html
+Outputs: <OUT_DIR>/<name>_{sw,hlsc,rtl}.png, summary.csv, index.html
 
-The source photographs are not redistributed; point SWEEPLSD_DATASET at a
-directory of IMGP*.png Full-HD grayscale images (default: a local path).
+Source photographs are never redistributed with this repository. Point
+SWEEPLSD_DATASET at a directory of Full-HD grayscale PNGs — e.g. the 1080p rung
+produced by bench/liu4k/preprocess.py — and the three input directories at
+whatever produced them:
+
+  SWEEPLSD_DATASET   image directory                  (required)
+  SWEEPLSD_GLOB      filename pattern within it       (default: *.png)
+  SWEEPLSD_SW_DIR    SW segment dumps                 (default: <root>/.compare150/sw)
+  SWEEPLSD_HLS_DIR   HLS-C record dumps               (default: <root>/rtl/tb/vprof)
+  SWEEPLSD_RTL_DIR   RTL record dumps                 (default: <root>/rtl/tb/rtl150)
+  SWEEPLSD_OUT_DIR   render output                    (default: <root>/.compare150/render)
 """
 import csv
 import math
@@ -33,11 +42,12 @@ from glob import glob
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATASET = os.environ.get("SWEEPLSD_DATASET", "E:/dataset/WasedaDataset")
-SW_DIR = os.path.join(ROOT, ".compare150", "sw")
-HLS_DIR = os.path.join(ROOT, "rtl", "tb", "vprof")
-RTL_DIR = os.path.join(ROOT, "rtl", "tb", "rtl150")
-OUT_DIR = os.path.join(ROOT, ".compare150", "render")
+DATASET = os.environ.get("SWEEPLSD_DATASET")
+GLOB_PAT = os.environ.get("SWEEPLSD_GLOB", "*.png")
+SW_DIR = os.environ.get("SWEEPLSD_SW_DIR", os.path.join(ROOT, ".compare150", "sw"))
+HLS_DIR = os.environ.get("SWEEPLSD_HLS_DIR", os.path.join(ROOT, "rtl", "tb", "vprof"))
+RTL_DIR = os.environ.get("SWEEPLSD_RTL_DIR", os.path.join(ROOT, "rtl", "tb", "rtl150"))
+OUT_DIR = os.environ.get("SWEEPLSD_OUT_DIR", os.path.join(ROOT, ".compare150", "render"))
 
 COLOR = (0, 255, 0)
 WIDTH = 2
@@ -113,11 +123,20 @@ def render(name, segs, tag, bg):
 
 
 def main():
+    if not DATASET:
+        sys.exit("error: set SWEEPLSD_DATASET to the image directory "
+                 "(e.g. data/liu4k_bench/1080). See the module docstring.")
+    if not os.path.isdir(DATASET):
+        sys.exit("error: SWEEPLSD_DATASET is not a directory: %s" % DATASET)
     os.makedirs(OUT_DIR, exist_ok=True)
-    names = sorted(os.path.basename(f)[:-4] for f in glob(os.path.join(DATASET, "IMGP*.png")))
+    # name -> source path, so the glob may carry any extension.
+    srcs = {os.path.splitext(os.path.basename(f))[0]: f
+            for f in sorted(glob(os.path.join(DATASET, GLOB_PAT)))}
+    if not srcs:
+        sys.exit("error: no images matching %s in %s" % (GLOB_PAT, DATASET))
     only = sys.argv[1:] if len(sys.argv) > 1 else None
     rows = []
-    for name in names:
+    for name in sorted(srcs):
         if only and name not in only:
             continue
         sw = load_sw(name)
@@ -125,7 +144,7 @@ def main():
         rtl = load_records(os.path.join(RTL_DIR, name + "_recs_out.txt"), 10)
         if sw is None and hls is None and rtl is None:
             continue
-        bg = Image.open(os.path.join(DATASET, name + ".png")).convert("L").convert("RGB")
+        bg = Image.open(srcs[name]).convert("L").convert("RGB")
         for segs, tag in ((sw, "sw"), (hls, "hlsc"), (rtl, "rtl")):
             if segs is not None:
                 render(name, segs, tag, bg)
@@ -148,15 +167,15 @@ def main():
                 "figcaption{font-size:12px;text-align:center;padding:2px}</style>\n"
                 "<h1>SweepLSD: pure SW / HLS-C model / RTL sim (identical rendering)</h1>\n"
                 "<p style='max-width:72em;color:#bbb'><b>Configurations.</b> "
-                "The SW column is <code>detect()</code> with <code>Params::improved()</code>, "
-                "which includes sub-pixel NMS; the HLS-C and RTL columns run the hardware "
-                "configuration, which omits sub-pixel NMS (kept SW/HLS-only — it does not fit "
-                "the RTL judge's 128-bit envelope). The small SW-vs-HLS count differences are "
-                "exactly this configuration delta: with sub-pixel NMS disabled, "
-                "<code>detect()</code> matches the HLS-C counts on 150/150 corpus images "
+                "The SW column is <code>detect()</code> with the shipped "
+                "<code>Params{}</code>, which includes sub-pixel NMS; the HLS-C and RTL "
+                "columns run the hardware configuration, which omits sub-pixel NMS (kept "
+                "SW/HLS-only — it does not fit the RTL judge's 128-bit envelope). The small "
+                "SW-vs-HLS count differences are exactly this configuration delta: with "
+                "sub-pixel NMS disabled, <code>detect()</code> matched the HLS-C counts on "
+                "every image of the 150-photo Full-HD test corpus used at the time "
                 "(verified 2026-07-13). The RTL column is simulated with real 1080p30 "
-                "event-FIFO timing, so a saturated dense frame may shed segments "
-                "(one frame in this corpus).</p>\n")
+                "event-FIFO timing, so a saturated dense frame may shed segments.</p>\n")
         for (name, a, b, c) in rows:
             f.write("<div class='row'><h3>%s &nbsp; <small>SW %s / HLS-C %s / RTL %s</small></h3>"
                     "<div class='imgs'>" % (name, a, b, c))
