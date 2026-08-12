@@ -142,6 +142,11 @@ https://github.com/user-attachments/assets/b0a95a7a-fac0-4c62-ac6a-86731b2cbbeb
 - `examples/vanishing_points.cpp` — 非較正の逐次RANSAC消失点（内部パラメータ不要）
 - `examples/opencv_detect.cpp` — ヘッダオンリーアダプタ経由で OpenCV コードから利用
 
+この設計が下流タスクに実際に届くのか——4Kまでの単フレーム姿勢推定と水平線ロック、
+EuRoC/TUM-VI 実映像での挙動、および適用限界——は
+[`docs/applications.html`](https://yosh-shimizu.github.io/sweeplsd/applications.html)
+で計測しています。
+
 ## 評価
 
 `docs/` の内容はすべて再現可能です: 合成グラウンドトゥルースの生成、速度ベンチマーク、
@@ -156,6 +161,12 @@ SweepLSD の設計は清水嘉泰（2014年修士論文、国内学会で OPLSD 
 本リポジトリでは配布していません）。本再実装・改善・評価スイートは、著者が
 Claude（Anthropic）との AI 協働ペア作業で構築したもので、アルゴリズム上の主張は
 すべて `docs/` の計測で検証されています。
+
+## 引用
+
+機械可読なメタデータは [`CITATION.cff`](CITATION.cff) にあります（GitHub の
+"Cite this repository" が BibTeX/APA に変換します）。アルゴリズムの完全な記述と
+評価をまとめたプレプリントを準備中で、公開され次第そちらを推奨引用にします。
 
 ## ライセンス
 

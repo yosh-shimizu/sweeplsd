@@ -1,0 +1,50 @@
+cff-version: 1.2.0
+message: "If you use SweepLSD in academic work, please cite it as below."
+title: "SweepLSD"
+abstract: >-
+  A line segment detector that reads the image exactly once, top to bottom.
+  Every stage — including connected-component labelling and the final line
+  test — processes the image as a row stream, so intermediate memory is
+  O(width) rather than O(pixels) and the per-pixel core is integer-only.
+  Ships as a dependency-free C++17 library plus synthesizable HLS C++ and
+  Verilog RTL that run live on an FPGA at 1080p30 with no frame buffer.
+type: software
+authors:
+  - family-names: Shimizu
+    given-names: Yoshiyasu
+    email: yoshiyasu.shimizu.research@gmail.com
+    affiliation: "Independent researcher"
+    # orcid: "https://orcid.org/XXXX-XXXX-XXXX-XXXX"
+repository-code: "https://github.com/yosh-shimizu/sweeplsd"
+url: "https://yosh-shimizu.github.io/sweeplsd/"
+license: MIT
+version: 4.0.0
+date-released: "2026-08-11"
+keywords:
+  - line segment detection
+  - computer vision
+  - streaming algorithm
+  - connected-component labelling
+  - FPGA
+  - high-level synthesis
+  - real-time
+
+# A preprint giving the first complete description of the algorithm and its
+# evaluation is in preparation. Once it is public, uncomment the block below
+# and fill in the identifier — `preferred-citation` makes GitHub's "Cite this
+# repository" offer the paper instead of the software entry above.
+#
+# preferred-citation:
+#   type: article
+#   title: >-
+#     SweepLSD: A One-Pass, O(width)-Memory Line Segment Detector with an
+#     Integer-Only Streaming Core and a Real-Time FPGA Realization
+#   authors:
+#     - family-names: Shimizu
+#       given-names: Yoshiyasu
+#   year: 2026
+#   journal: "arXiv preprint"
+#   identifiers:
+#     - type: other
+#       value: "arXiv:XXXX.XXXXX"
+#   url: "https://arxiv.org/abs/XXXX.XXXXX"

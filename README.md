@@ -157,6 +157,11 @@ architecture & verification → [`rtl/DESIGN.md`](rtl/DESIGN.md).
 - `examples/opencv_detect.cpp` — using SweepLSD from OpenCV code via the
   header-only adapter
 
+Whether the design actually reaches a downstream task — single-frame camera
+attitude and horizon lock at up to 4K, on EuRoC/TUM-VI footage, plus the
+honest scope limits — is measured in
+[`docs/applications.html`](https://yosh-shimizu.github.io/sweeplsd/applications.html).
+
 ## Evaluation
 
 Everything in `docs/` is reproducible: synthetic ground-truth generation,
@@ -173,6 +178,13 @@ This reimplementation, the improvements, and the evaluation suite were built
 by the author in collaboration with Claude (Anthropic) — the code, benchmarks,
 and documentation were produced in AI-assisted pair-work sessions, with all
 algorithmic claims verified by the measurements in `docs/`.
+
+## Citing
+
+Machine-readable metadata is in [`CITATION.cff`](CITATION.cff) — GitHub's
+"Cite this repository" button renders it as BibTeX/APA. A preprint giving the
+first complete description of the algorithm and its evaluation is in
+preparation; when it is public it will become the preferred citation.
 
 ## License
 
