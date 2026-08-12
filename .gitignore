@@ -1,5 +1,8 @@
 build/
 build_*/
+# Side-by-side toolchain builds for the compiler-sensitivity study
+# (docs/benchmarks.html §6): one tree per compiler, all regenerable.
+cb_*/
 *.exe
 *.obj
 *.o
@@ -12,14 +15,15 @@ tools/cv2pdb/
 .vs/
 .vscode/
 .cache/
+__pycache__/
 CMakeUserPresets.json
 
 # FIFO-drop study visualiser output (large, regenerable via hls/tools/fifo_dropviz)
 dropviz_out/
 
-# Local corpus manifest for the overflow tools: absolute paths into the (not
-# redistributed) Waseda dataset — machine-specific, keep on disk, never commit.
-hls/tools/waseda150.txt
+# Local corpus manifests for the overflow tools (`@manifest` arguments): lists of
+# absolute image paths — machine-specific, keep on disk, never commit.
+hls/tools/*.txt
 
 # HLS build artifacts (hls/)
 hls/proj_sweeplsd_hls/
@@ -46,15 +50,21 @@ rtl/boards/atlys/xapp495/
 振り返り/
 
 # Large golden-vector sets — regenerable with rtl/tools/dump_vectors (see
-# rtl/DESIGN.md). vectors_big/ also dumps raw Waseda image pixels, which are
-# not redistributed here. Only the small self-contained synthetic set
-# (rtl/tb/vectors/, built from dump_vectors' own procedural images) is tracked.
+# rtl/DESIGN.md). vectors_big/ and vec_liu4k_est/ also dump raw photograph
+# pixels from the benchmark corpus, which is not redistributed here. Only the
+# small self-contained synthetic set (rtl/tb/vectors/, built from dump_vectors'
+# own procedural images) is tracked.
 rtl/tb/vectors_720p/
 rtl/tb/vectors_big/
+rtl/tb/vec_liu4k_est/
 rtl/tb/vprof/
 
+# Corpus-wide RTL run outputs (rtl/tb/run_liu4k_t2.sh, run_liu4k_burst.sh):
+# per-image parity logs, burst CSVs and summaries — regenerable.
+rtl/tb/liu4k_*/
+
 # Local diagnostic dumps and comparison renders — regenerable, and some derive
-# from the non-redistributed Waseda photos. Keep on disk, never commit.
+# from photographs that are not redistributed here. Keep on disk, never commit.
 .compare150/
 *.pgm
 rtl/tb/rtl150/

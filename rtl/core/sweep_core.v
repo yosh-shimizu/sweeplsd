@@ -141,9 +141,10 @@ module sweep_core #(
 
     // ---- elastic buffer ------------------------------------------------------------
     // Depth: with the concurrent-ingest backend the FIFO only backs up while
-    // the labeller runs >3 rows behind; the worst Waseda-corpus backlog is
-    // IMGP1032's 5,975 events (drop-proof-FIFO measurement), so 8192 would
-    // make every corpus frame zero-drop — and it does in the RTL burst sim.
+    // the labeller runs >3 rows behind; the worst per-frame backlog measured
+    // over the Full-HD photograph corpus is 5,975 events (drop-proof-FIFO
+    // measurement), so 8192 would make every corpus frame zero-drop — and it
+    // does in the RTL burst sim.
     // ON THE BOARD, however, event_fifo's FWFT front (`front = mem[rp]`, an
     // asynchronous read) forces XST to infer DISTRIBUTED (LUT) RAM: at 8192×15
     // that is ~2,680 memory LUTs plus an 8192:1 fabric read-mux tree, which
