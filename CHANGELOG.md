@@ -72,7 +72,7 @@
 - Repository URLs updated for the account rename `ysmz334` →
   `yosh-shimizu` (github.io Pages links do not redirect across renames).
 
-## v3.0.4 (2026-07-17)
+## v3.0.4 (2026-07-18)
 
 - **Labelling performance: Full-HD one-pass ~12.2 → ~11.5 ms (−5 %), output
   bit-identical.** The Stage-3 row scan in `src/labeling.cpp` now advances a
@@ -82,6 +82,14 @@
   hit. No algorithm, numerics, parameter, or API change; verified
   bit-identical over 13 images / 11,468 segments with both drivers, and the
   HLS core stays bit-exact against the software golden model.
+- **Docs/README/paper numbers refreshed to the current build** (they had
+  lagged since v3.0.1): Full-HD headline one-pass 11.4 ms / multi-pass
+  15.8 ms; ELSED 28.2 ms (2.5×), EDLines 39.4 ms (3.5×, median over the test
+  corpus), LSD 247 ms (22×). The README headline table and the paper's
+  per-scale table now include ELSED and EDLines respectively.
+
+## v3.0.3 (2026-07-17)
+
 - **Kernel performance: Full-HD one-pass ~13.5 → ~12.0 ms (−11 %), output
   bit-identical.** Three independent rewrites in `src/kernels.hpp`: the edge
   NMS selects its competitor pair with a uint16 mask blend instead of int
@@ -90,12 +98,6 @@
   thermometer byte + popcount (endpoint stage −17 %, verified exhaustively
   over all 2^16 ring configurations); the sub-pixel NMS indexes its three
   power samples directly with the two border columns peeled (−9 %).
-- **Docs/README/paper numbers refreshed to the current build** (they had
-  lagged since v3.0.1): Full-HD headline one-pass 11.4 ms / multi-pass
-  15.8 ms; ELSED 28.2 ms (2.5×), EDLines 39.4 ms (3.5×, median over the test
-  corpus), LSD
-  247 ms (22×). The README headline table and the paper's per-scale table now
-  include ELSED and EDLines respectively.
 
 ## v3.0.2 (2026-07-15)
 
