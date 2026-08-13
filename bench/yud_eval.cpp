@@ -501,7 +501,8 @@ void renderAxes(const std::string& out_png, const sweeplsd::GrayImage& gray,
 
 int main(int argc, char** argv) {
     std::string manifest_path, html_path, assets_dir, gtlines_path, mlsd_dir, edreal_dir,
-        elsed_dir;
+        elsed_dir, per_csv_path;
+    bool only_external = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--html" && i + 1 < argc) html_path = argv[++i];
@@ -512,6 +513,13 @@ int main(int argc, char** argv) {
         // --elsed-dir DIR : ingest genuine ELSED segments per image (same file
         // format as the EDLines runner: "<count> <median_ms>" then x0 y0 x1 y1)
         else if (a == "--elsed-dir" && i + 1 < argc) elsed_dir = argv[++i];
+        // --per-csv PATH : also dump the PER-IMAGE error of every method
+        // ("name,method,mean_deg,max_deg,nlines"). The table above reports only
+        // medians, which cannot support a paired comparison against an external
+        // estimator (or a paired significance test between two methods) — those
+        // need the per-image pairing. Off by default; does not affect the run.
+        else if (a == "--per-csv" && i + 1 < argc) per_csv_path = argv[++i];
+        else if (a == "--only-external") only_external = true;
         else if (!a.empty() && a[0] != '-') manifest_path = a;
     }
     if (manifest_path.empty()) {
@@ -551,7 +559,7 @@ int main(int argc, char** argv) {
     //     projected Manhattan lines, with endpoint noise sigma swept. ---
     struct SynPoint { double sigma, med, frac1; };
     std::vector<SynPoint> syn;
-    {
+    if (!only_external) {
         std::mt19937 rng(2024);
         const int trials = 300;
         std::printf("estimator self-consistency (synthetic, %d trials/condition):\n", trials);
@@ -610,16 +618,30 @@ int main(int argc, char** argv) {
     };
     auto runEd = [](const sweeplsd::GrayImage& s) { return edlines::detect(s); };
 
+    std::ofstream per_csv;
+    if (!per_csv_path.empty()) {
+        per_csv.open(per_csv_path);
+        per_csv << "name,method,mean_deg,max_deg,nlines\n";
+    }
+
     int done = 0;
     for (const ManifestRow& r : rows) {
-        sweeplsd::GrayImage gray = sweeplsd::loadGray(r.path);
-        if (gray.width == 0) { std::printf("  skip (load fail): %s\n", r.path.c_str()); continue; }
+        sweeplsd::GrayImage gray;
+        if (!only_external) {
+            gray = sweeplsd::loadGray(r.path);
+            if (gray.width == 0) { std::printf("  skip (load fail): %s\n", r.path.c_str()); continue; }
+        }
 
         struct RunOne { Acc* acc; std::vector<LineSegment> segs; };
-        std::vector<RunOne> runs = {
-            {&sweeplsd_a, runSweeplsd(gray)}, {&sweeplsd_imp_a, runSweeplsdImp(gray)},
-            {&sweeplsd_implink_a, runSweeplsdImpLink(gray)},
-            {&lsd_a, runLsd(gray)}, {&ed_a, runEd(gray)}};
+        // --only-external skips the built-in detectors and scores just the
+        // externally supplied segment sets. A defect-sensitivity sweep re-scores
+        // many synthetic line sets through the same estimator; without this it
+        // would re-run every detector on all 102 images for each condition.
+        std::vector<RunOne> runs;
+        if (!only_external)
+            runs = {{&sweeplsd_a, runSweeplsd(gray)}, {&sweeplsd_imp_a, runSweeplsdImp(gray)},
+                    {&sweeplsd_implink_a, runSweeplsdImpLink(gray)},
+                    {&lsd_a, runLsd(gray)}, {&ed_a, runEd(gray)}};
         if (have_edreal) runs.push_back({&edreal_a, runEdReal(r.name)});
         if (have_mlsd) runs.push_back({&mlsd_a, runMlsd(r.name)});
         if (have_elsed) runs.push_back({&elsed_a, runElsed(r.name)});
@@ -628,11 +650,18 @@ int main(int argc, char** argv) {
         for (RunOne& ro : runs) {
             std::vector<CalLine> cl = calibrate(ro.segs, f, cx, cy, min_len);
             std::array<Vec3, 3> frame;
-            if (!estimateManhattan(cl, tau, frame)) { ro.acc->failed++; continue; }
+            if (!estimateManhattan(cl, tau, frame)) {
+                ro.acc->failed++;
+                if (per_csv) per_csv << r.name << ',' << ro.acc->name << ",,," << cl.size() << '\n';
+                continue;
+            }
             FrameError e = frameError(frame, r.gt);
             ro.acc->mean_err.push_back(e.mean_deg);
             ro.acc->max_err.push_back(e.max_deg);
             ro.acc->nlines.push_back((int)cl.size());
+            if (per_csv)
+                per_csv << r.name << ',' << ro.acc->name << ',' << e.mean_deg << ','
+                        << e.max_deg << ',' << cl.size() << '\n';
         }
 
         if (++done % 20 == 0) std::printf("  ...%d/%zu\n", done, rows.size());
