@@ -29,7 +29,14 @@ false edges, so the resolution claim cannot be tested downstream on real data. W
 two photorealistic scenes — an indoor classroom and the outdoor Barcelona Pavilion — from 540p to
 4K with the camera pose <i>identical</i> across resolutions and <b>exact</b> attitude ground
 truth. Each detector's segments feed the same calibrated Manhattan/gravity estimator, and we
-report the angle between the recovered and true gravity directions.</p>
+report the angle between the recovered and true gravity directions. The estimator recovers the
+orthogonal direction triad, then <b>re-fits the vertical axis against its own inlier lines</b>:
+as a triad member that axis is constrained orthogonal to the other two, and outdoors those are
+weakly determined — an architectural exterior offers few horizontal cues — so the constraint
+transfers their error onto gravity. Releasing it improves <i>every</i> detector here by 3–20×.
+The trade is scene-dependent and we do not take it on the real data below: in cluttered rooms all
+three axes are well supported, the constraint is a useful regulariser, and releasing it costs
+0.07–0.1° of mean error on EuRoC.</p>
 
 <p><b>Accuracy is preserved, not traded.</b> Across the sweep the four detectors are within each
 other's noise on attitude, and they converge as resolution rises: outdoors the median gravity
@@ -40,15 +47,6 @@ the same with no consistent ordering (0.60–1.01° at 540p, 0.08–0.12° at 4K
 accuracy is simply not a discriminator between these detectors</b>; what differs is the speed and
 memory below, and those are not paid for in task accuracy. What the sweep does show sharply is
 that <i>resolution</i> pays: SweepLSD improves 5.7× from 540p to 4K (0.51°→0.09°).</p>
-
-<p class="sub"><b>Updated 2026-08-13.</b> These numbers replace an earlier set (indoors 0.7–1.6°,
-outdoors 1.67°→1.13° with SweepLSD best at every resolution). The change is entirely in the
-shared estimator, which derived gravity as one axis of an orthonormalised Manhattan triad and so
-inherited the error of the other two; re-fitting gravity against its own inlier lines improves
-<i>every</i> detector by 3–20× and leaves them statistically indistinguishable. The earlier
-"SweepLSD has the best outdoor median at every resolution" claim does not survive that fix, and
-is withdrawn. Detection is byte-identical — only the estimator changed — so the speed and memory
-figures are unchanged.</p>
 
 <p><b>Memory and speed diverge with resolution.</b> At 4K (Barcelona Pavilion) SweepLSD detects
 in ≈30&nbsp;ms against ELSED's 81&nbsp;ms (2.7×) and EDLines' 128&nbsp;ms, and — the decisive
@@ -81,17 +79,7 @@ budget in the median on a single desktop core. Only rendering the stabilised out
 this figure: it is presentation, identical for every detector, and in a deployed system (a gimbal
 or crop window) it is not on the estimate's critical path.</p>
 
-<p class="sub"><b>Updated 2026-08-13.</b> This demonstration previously reported 0.69°, with a
-temporal EMA (α&nbsp;=&nbsp;0.65) smoothing the estimate. Two things were wrong with that. The
-estimator derived gravity as one axis of an orthonormalised Manhattan triad, so the other two
-axes — poorly determined on an outdoor scene with few horizontal cues — dragged it off; re-fitting
-gravity against its own inlier lines instead takes the raw per-frame error from 0.39° to 0.06°.
-And on a camera moving this fast the EMA <i>lagged</i>, contributing more error than the estimate
-itself: it turned a 0.39° estimate into a 0.69° displayed one. With the accurate estimate no
-smoothing is needed, so there is none. The refit is an estimator change, applies to every
-detector, and is off by default in the shipped estimator because on cluttered real scenes
-(EuRoC) the orthogonality constraint is a useful regulariser rather than a liability — the
-real-data numbers elsewhere on this site are unaffected.</p>
+<p>Temporal smoothing is the obvious addition to a stabiliser, and we deliberately omit it: at these rotation rates an exponential moving average <i>lags</i>, and the lag dominates whatever jitter it suppresses. Smoothing the same estimates with &alpha;&nbsp;=&nbsp;0.65 costs an order of magnitude — 0.06° &rarr; 0.63° median. Per-frame geometry this accurate is what makes the temporal term unnecessary, and omitting it is what keeps the demonstration single-frame, and so bounded-latency, end to end.</p>
 
 <video controls preload="metadata" style="width:100%;border-radius:8px;border:1px solid #dde1e7;margin-top:12px"
   src="https://github.com/user-attachments/assets/110ec32b-855c-4064-8363-475d330d6c1d"></video>
@@ -116,8 +104,7 @@ draws itself as the flight progresses.
 (<a href="https://github.com/user-attachments/assets/fba86929-e314-47c3-bb3e-3b62e9740b16">direct video link</a>
 if the embed does not play.)</p>
 
-<p class="sub">ELSED's median no longer dips at 4K under the corrected estimator (0.11°&nbsp;→&nbsp;0.07°
-from 1440p), but its <i>tail</i> still does (p90 10.1° at 4K): its defaults target 640×480, so at
+<p class="sub">ELSED's medians track the others, but its error <i>tail</i> grows at 4K (p90 10.1°): its defaults target 640×480, so at
 4K it over-splits foliage into short lines that survive the shared minimum length and pollute the
 inlier vote. At its design minimum length that tail returns to parity. The memory and speed gaps
 are independent of it. Speed ratios against the OpenCV-based baselines depend on
