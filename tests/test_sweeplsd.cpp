@@ -91,6 +91,28 @@ Scene makeScene(int w, int h, int cell, double contrast, double noise_sigma,
     return sc;
 }
 
+// A single bright bar running from the top edge to the BOTTOM edge, tilted so
+// it is not axis-aligned. The bottom edge is the point: with linking on, every
+// segment is held in the linker's active list until it falls out of the band,
+// so a chain that is still alive on the last row can only reach the caller if
+// the collector flushes it. Anything that forgets that flush loses this bar.
+GrayImage makeBottomBar(int w, int h) {
+    GrayImage im(w, h, 0);
+    std::vector<double> acc(std::size_t(w) * h, 95.0);
+    const double W = 6.0;                       // bar width
+    const double x_top = w / 2.0 - 12.0;        // tilt: ~3 deg off vertical
+    const double x_bot = w / 2.0 + 12.0;
+    for (int y = 0; y < h; ++y) {
+        const double cx = x_top + (x_bot - x_top) * (double(y) / (h - 1));
+        for (int x = 0; x < w; ++x) {
+            const double cov = std::min(1.0, std::max(0.0, 0.5 + (W / 2 - std::fabs(x - cx))));
+            if (cov > 0) acc[std::size_t(y) * w + x] += 95.0 * cov;
+        }
+    }
+    for (int i = 0; i < w * h; ++i) im.data[i] = std::uint8_t(std::min(255.0, acc[i]));
+    return im;
+}
+
 // ---------------------------------------------------------------- metrics
 struct Metrics {
     double recall = 0;      // GT length covered by matched detections
@@ -286,6 +308,72 @@ int main(int argc, char** argv) {
         std::printf("[parity] %s\n\n", fails == 0 ? "all configs: multi-pass == one-pass, "
                                                     "sparse == dense  (OK)"
                                                   : "FAILURES PRESENT");
+        if (fails) return 1;
+    }
+
+    // ---------- 1.5 detectEx contract ---------------------------------------
+    // detectEx() must return exactly the segments detect() returns, each paired
+    // with the scatter that produced it. Both halves have broken before:
+    //   * the segments -- takeSegmentsEx() did not flush the chains still alive
+    //     in the last `band` rows, so with linking on every segment near the
+    //     bottom edge silently vanished from the Ex output (~8% of a frame);
+    //   * the statistics -- they are only meaningful if they describe the
+    //     segment they ship with, which is what the invariants below pin down.
+    // Note the deliberate gap: link_collinear WITHOUT link_moment_fit is the one
+    // configuration where detectEx() cannot honour this contract (a merged chain
+    // has no single label whose moments describe it), so the Ex path forces
+    // linking off there. See the comment on detectEx() in the public header.
+    {
+        int fails = 0;
+        std::vector<std::pair<std::string, Params>> cfgs;
+        Params nolink = Params::improved(); nolink.link_collinear = false;
+        cfgs.push_back({"nolink", nolink});
+        Params lmf = Params::improved();
+        lmf.link_collinear = true; lmf.link_moment_fit = true;
+        cfgs.push_back({"link+momentfit", lmf});
+        cfgs.push_back({"orig2014", Params::original2014()});
+
+        std::vector<std::pair<std::string, GrayImage>> imgs;
+        imgs.push_back({"scene", makeScene(640, 480, 160, 95.0, 8.0, 1).img});
+        imgs.push_back({"bottombar", makeBottomBar(320, 240)});
+
+        for (auto& [iname, img] : imgs)
+            for (auto& [cname, cfg] : cfgs) {
+                auto ref = detect(img, cfg);
+                auto ex = detectEx(img, cfg);
+                std::vector<LineSegment> flat;
+                flat.reserve(ex.size());
+                for (const auto& e : ex) flat.push_back(e.seg);
+                if (!sameSegments(ref, flat)) {
+                    std::printf("EX-PARITY FAIL: %s/%-14s detect=%zu detectEx=%zu\n",
+                                iname.c_str(), cname.c_str(), ref.size(), ex.size());
+                    ++fails;
+                }
+                for (const auto& e : ex) {
+                    const double n = std::hypot(double(e.dir_x), double(e.dir_y));
+                    // eigenvalues of a covariance: non-negative and ordered;
+                    // the direction is a unit vector; elongation is what the
+                    // judgment stage already accepted; and the along-axis spread
+                    // must match the segment it ships with (uniform line: L^2/12).
+                    const double len = std::hypot(double(e.seg.x1) - e.seg.x0,
+                                                  double(e.seg.y1) - e.seg.y0);
+                    const bool ok = e.ev_min >= -1e-6 && e.ev_max >= e.ev_min &&
+                                    std::fabs(n - 1.0) < 1e-4 && e.pix_num > 0 &&
+                                    e.ev_min <= cfg.aspect_th * e.ev_max + 1e-6 &&
+                                    std::fabs(std::sqrt(12.0 * e.ev_max) - len) < 0.30 * len + 2.0;
+                    if (!ok) {
+                        std::printf("EX-STATS FAIL: %s/%s  n=%d dir=(%.4f,%.4f) "
+                                    "ev=(%.4f,%.4f) len=%.2f sqrt(12ev_max)=%.2f\n",
+                                    iname.c_str(), cname.c_str(), e.pix_num, e.dir_x, e.dir_y,
+                                    e.ev_max, e.ev_min, len, std::sqrt(12.0 * e.ev_max));
+                        ++fails;
+                        break;  // one report per config is enough
+                    }
+                }
+            }
+        std::printf("[detectEx] %s\n\n",
+                    fails == 0 ? "detect() == detectEx(), scatter statistics consistent  (OK)"
+                               : "FAILURES PRESENT");
         if (fails) return 1;
     }
 
