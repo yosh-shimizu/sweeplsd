@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.1.0 (2026-08-16)
+
+- **Fix: `detectEx()` no longer drops segments still active at the bottom
+  image edge.** `takeSegmentsEx()` now flushes the remaining live labels the
+  way `takeSegments()` always did; a contract test pins the behaviour.
+  `detect()` was never affected.
+- **New: `Params::link_moment_fit` (default off).** When the collinear linker
+  merges a chain, accumulate the chain's true point scatter via the
+  parallel-axis theorem and refit the principal axis, instead of keeping the
+  first fragment's axis. Chain scatter is seeded from each label's measured
+  covariance (not a rank-1 endpoint seed), so the linked segment's
+  `(pix_num, ev_max, ev_min)` remain meaningful for downstream
+  uncertainty-weighted estimation. Byte-identical output when off.
+- bench: `yud_eval` reports per-axis vanishing-point errors in its CSV.
+
 ## v4.0.0 (2026-08-11)
 
 - **BREAKING: the judgment-stage border rejection (improvement (i),
