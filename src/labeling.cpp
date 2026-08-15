@@ -204,8 +204,85 @@ struct Labeler::Impl {
         float dirx, diry;
         int max_y;
         bool prov;  // provisional: every part was admitted below pixel_num_th
+        // Params::link_moment_fit only: running scatter of the whole chain,
+        // as (weight, centroid, CENTRAL second moments). Combining two of these
+        // is the parallel-axis theorem, so a chain's direction comes from every
+        // pixel it owns rather than from its two outermost endpoints.
+        double n = 0, cx = 0, cy = 0, sxx = 0, sxy = 0, syy = 0;
+        bool has_ex = false;   // the chain's Ex record is derivable (moment fit)
     };
     std::vector<Active> active;
+
+    // Seed a chain's scatter from the label's MEASURED covariance. The
+    // endpoint-uniform fallback below zeroes the perpendicular variance
+    // (rank-1 seed), so a linked chain's ev_min reflects only the
+    // between-fragment centroid spread — half the segments of a linked
+    // detectEx() run reported ev_min == 0 exactly, which breaks any
+    // downstream inverse-variance weighting. The label's true covariance is
+    // already computed for the aspect judgment, so use it.
+    static void seedMomentsEx(const LineSegmentEx& e, Active& a) {
+        const double n = e.pix_num > 0 ? double(e.pix_num) : 1.0;
+        const double dx = e.dir_x, dy = e.dir_y;   // unit principal axis
+        const double px = -dy, py = dx;            // unit normal
+        const double evx = e.ev_max, evn = e.ev_min;
+        a.n = n;
+        a.cx = e.cx;
+        a.cy = e.cy;
+        a.sxx = n * (evx * dx * dx + evn * px * px);
+        a.sxy = n * (evx * dx * dy + evn * px * py);
+        a.syy = n * (evx * dy * dy + evn * py * py);
+    }
+
+    // Second moments of a fragment, treating it as `n` points spread uniformly
+    // between its endpoints (variance along the segment is len^2/12).
+    static void seedMoments(const LineSegment& g, double n, Active& a) {
+        const double dx = double(g.x1) - g.x0, dy = double(g.y1) - g.y0;
+        const double len2 = dx * dx + dy * dy;
+        a.n = n > 0 ? n : 1.0;
+        a.cx = 0.5 * (double(g.x0) + g.x1);
+        a.cy = 0.5 * (double(g.y0) + g.y1);
+        const double k = a.n / 12.0;  // n * (len^2/12) / len^2 * {dx^2, dxdy, dy^2}
+        a.sxx = k * dx * dx;
+        a.sxy = k * dx * dy;
+        a.syy = k * dy * dy;
+        (void)len2;
+    }
+
+    // The chain's LineSegmentEx, derived from its accumulated scatter. Only
+    // meaningful under link_moment_fit, which is what maintains that scatter;
+    // it lets detectEx() report fit statistics for LINKED chains instead of
+    // having to disable linking (see labelAndJudgeEx).
+    static LineSegmentEx exFromChain(const Active& a) {
+        LineSegmentEx e;
+        e.seg = a.seg;
+        e.pix_num = int(a.n + 0.5);
+        e.cx = float(a.cx);
+        e.cy = float(a.cy);
+        const double cxx = a.sxx / a.n, cxy = a.sxy / a.n, cyy = a.syy / a.n;
+        const double tr = cxx + cyy;
+        const double rt = std::sqrt((cxx - cyy) * (cxx - cyy) + 4.0 * cxy * cxy);
+        const double th = 0.5 * std::atan2(2.0 * cxy, cxx - cyy);
+        e.dir_x = float(std::cos(th));
+        e.dir_y = float(std::sin(th));
+        e.ev_max = float(0.5 * (tr + rt));
+        e.ev_min = float(0.5 * (tr - rt));
+        return e;
+    }
+
+    // Parallel-axis combine of two chain scatters.
+    static void combineMoments(const Active& a, const Active& b, Active& o) {
+        const double n = a.n + b.n;
+        const double cx = (a.n * a.cx + b.n * b.cx) / n;
+        const double cy = (a.n * a.cy + b.n * b.cy) / n;
+        const double adx = a.cx - cx, ady = a.cy - cy;
+        const double bdx = b.cx - cx, bdy = b.cy - cy;
+        o.n = n;
+        o.cx = cx;
+        o.cy = cy;
+        o.sxx = a.sxx + b.sxx + a.n * adx * adx + b.n * bdx * bdx;
+        o.sxy = a.sxy + b.sxy + a.n * adx * ady + b.n * bdx * bdy;
+        o.syy = a.syy + b.syy + a.n * ady * ady + b.n * bdy * bdy;
+    }
 
     Impl(int w, int h, const Params& p, bool ex = false)
         : width(w), height(h), params(p), prev_row(w, 0), cur_row(w, 0), want_ex(ex) {
@@ -273,11 +350,17 @@ struct Labeler::Impl {
                                    std::fabs(double(a.seg.y1) - a.seg.y0));
             if (cheb + 1.0 < double(params.pixel_num_th)) return;
         }
+        if (want_ex && a.has_ex && a.n > 0) {
+            LineSegmentEx e = exFromChain(a);
+            pushOut(a.seg, &e);
+            return;
+        }
         pushOut(a.seg);
     }
 
     // Improvement 5: try to extend `s` by joining a collinear active segment.
-    void emit(LineSegment s, bool prov, const LineSegmentEx* ex = nullptr) {
+    void emit(LineSegment s, bool prov, const LineSegmentEx* ex = nullptr,
+              double pix_num = 0.0) {
         if (!params.link_collinear) {
             pushOut(s, ex);
             return;
@@ -301,6 +384,11 @@ struct Labeler::Impl {
         };
         float sdx, sdy;
         unit(s, sdx, sdy);
+        Active acc;  // running scatter of the chain `s` currently represents
+        if (params.link_moment_fit) {
+            if (ex) seedMomentsEx(*ex, acc);
+            else seedMoments(s, pix_num, acc);
+        }
 
         bool linked = true;
         while (linked) {
@@ -345,9 +433,25 @@ struct Labeler::Impl {
                 if (dirAngle(mdx, mdy, sdx, sdy) > max_ang ||
                     dirAngle(mdx, mdy, t.dirx, t.diry) > max_ang)
                     continue;
+                Active nacc;
+                if (params.link_moment_fit) {
+                    combineMoments(acc, t, nacc);
+                    // Principal axis of the combined scatter, then re-hang the
+                    // span endpoints on it: the direction now comes from every
+                    // pixel of the chain, not from `m`'s two endpoints.
+                    const double theta = 0.5 * std::atan2(2.0 * nacc.sxy,
+                                                          nacc.sxx - nacc.syy);
+                    const double ux = std::cos(theta), uy = std::sin(theta);
+                    double t0 = (double(m.x0) - nacc.cx) * ux + (double(m.y0) - nacc.cy) * uy;
+                    double t1 = (double(m.x1) - nacc.cx) * ux + (double(m.y1) - nacc.cy) * uy;
+                    m = {float(nacc.cx + t0 * ux), float(nacc.cy + t0 * uy),
+                         float(nacc.cx + t1 * ux), float(nacc.cy + t1 * uy)};
+                    unit(m, mdx, mdy);
+                }
                 s = m;
                 sdx = mdx;
                 sdy = mdy;
+                if (params.link_moment_fit) acc = nacc;
                 prov = prov && t.prov;
                 active.erase(active.begin() + i);
                 linked = true;
@@ -355,7 +459,13 @@ struct Labeler::Impl {
             }
         }
         int my = int(std::lround(std::max(s.y0, s.y1)));
-        active.push_back({s, sdx, sdy, my, prov});
+        Active a{s, sdx, sdy, my, prov};
+        if (params.link_moment_fit) {
+            a.n = acc.n; a.cx = acc.cx; a.cy = acc.cy;
+            a.sxx = acc.sxx; a.sxy = acc.sxy; a.syy = acc.syy;
+            a.has_ex = true;
+        }
+        active.push_back(a);
     }
 
     // Line judgment (thesis §3.2.4): enough pixels (criterion 1) + the new
@@ -439,7 +549,33 @@ struct Labeler::Impl {
         s.x1 += lshift; s.y1 += lshift;
         if (!passesNfa(L.pix_num, s)) return;
 
-        if (!want_ex) { emit(s, L.pix_num < params.pixel_num_th); return; }
+        if (!want_ex) {
+            if (params.link_moment_fit) {
+                // Same Ex record as the want_ex branch below, so detect() and
+                // detectEx() seed the linker's chain scatter identically
+                // (seedMomentsEx) and stay equivalent under link_moment_fit.
+                double cxx = L.x_sq_sum / W - mux * mux;
+                double cxy = L.xy_sum / W - mux * muy;
+                double cyy = L.y_sq_sum / W - muy * muy;
+                double tr = cxx + cyy,
+                       rt = std::sqrt((cxx - cyy) * (cxx - cyy) + 4.0 * cxy * cxy);
+                double theta_n = 0.5 * std::atan2(2.0 * cxy, cxx - cyy);
+                LineSegmentEx e;
+                e.seg = s;
+                e.pix_num = int(L.pix_num);
+                e.cx = float(mux) + lshift;
+                e.cy = float(muy) + lshift;
+                e.dir_x = float(std::cos(theta_n));
+                e.dir_y = float(std::sin(theta_n));
+                e.ev_max = float(0.5 * (tr + rt));
+                e.ev_min = float(0.5 * (tr - rt));
+                emit(s, L.pix_num < params.pixel_num_th, &e, double(L.pix_num));
+                return;
+            }
+            emit(s, L.pix_num < params.pixel_num_th, nullptr,
+                 double(L.pix_num));
+            return;
+        }
         // Per-segment scatter statistics: normalised covariance (variance in
         // px^2) regardless of the weighting branch, so eigenvalues are
         // physically meaningful.
@@ -457,7 +593,7 @@ struct Labeler::Impl {
         e.dir_y = float(std::sin(theta_n));
         e.ev_max = float(0.5 * (tr + rt));
         e.ev_min = float(0.5 * (tr - rt));
-        emit(s, L.pix_num < params.pixel_num_th, &e);
+        emit(s, L.pix_num < params.pixel_num_th, &e, double(L.pix_num));
     }
 
     // `Weighted` is a compile-time specialization of the moment update. The
@@ -735,7 +871,13 @@ std::vector<LineSegment> Labeler::takeSegments() {
     return std::move(impl_->segments);
 }
 std::vector<LineSegmentEx> Labeler::takeSegmentsEx() {
-    // Extended collection runs with linking disabled, so `active` is empty here.
+    // Extended collection used to run with linking always disabled, which left
+    // `active` empty here. Under link_moment_fit linking IS on (the chain scatter
+    // supplies the fit statistics), so the chains still alive in the last `band`
+    // rows have to be flushed exactly as takeSegments() does -- otherwise every
+    // segment near the bottom of the image silently vanishes from the Ex output.
+    for (const auto& a : impl_->active) impl_->flushActive(a);
+    impl_->active.clear();
     reportPoolGrowths(impl_->labels.grow_events);
     return std::move(impl_->segments_ex);
 }
@@ -771,9 +913,12 @@ std::vector<LineSegmentEx> labelAndJudgeEx(const Grid<Feature>& feat, const Para
                                            const Grid<std::uint16_t>* power,
                                            const Grid<EdgeDir>* dir,
                                            const Grid<std::int8_t>* delta) {
-    // Disable linking so moments map 1:1 to the emitted segments.
+    // Linking normally breaks the 1:1 map from a label's moments to an emitted
+    // segment, so it is disabled here -- EXCEPT under link_moment_fit, which
+    // accumulates the whole chain's scatter and can therefore report correct fit
+    // statistics for the merged chain (Impl::exFromChain).
     Params p = params;
-    p.link_collinear = false;
+    if (!p.link_moment_fit) p.link_collinear = false;
     return runLabeler(feat, p, power, dir, delta, true,
                       [](Labeler& l) { return l.takeSegmentsEx(); });
 }

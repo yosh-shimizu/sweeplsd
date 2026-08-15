@@ -296,6 +296,10 @@ bool estimateManhattan(const std::vector<CalLine>& lines, double tau,
 // --------------------------------------------------------------------------
 struct FrameError {
     double mean_deg, max_deg;
+    // Per-axis errors under the best assignment. The published VP literature
+    // scores every vanishing point individually (AA@k is built from the pooled
+    // per-VP error list), not the per-image mean, so both are kept.
+    double each_deg[3] = {0, 0, 0};
 };
 FrameError frameError(const std::array<Vec3, 3>& est, const std::array<Vec3, 3>& gt) {
     static const int perms[6][3] = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2},
@@ -314,7 +318,8 @@ FrameError frameError(const std::array<Vec3, 3>& est, const std::array<Vec3, 3>&
         }
     }
     double mx = std::max({best_each[0], best_each[1], best_each[2]});
-    return {best_sum / 3.0, mx};
+    FrameError fe{best_sum / 3.0, mx, {best_each[0], best_each[1], best_each[2]}};
+    return fe;
 }
 
 // --------------------------------------------------------------------------
@@ -621,7 +626,7 @@ int main(int argc, char** argv) {
     std::ofstream per_csv;
     if (!per_csv_path.empty()) {
         per_csv.open(per_csv_path);
-        per_csv << "name,method,mean_deg,max_deg,nlines\n";
+        per_csv << "name,method,mean_deg,max_deg,nlines,e0,e1,e2\n";
     }
 
     int done = 0;
@@ -652,7 +657,7 @@ int main(int argc, char** argv) {
             std::array<Vec3, 3> frame;
             if (!estimateManhattan(cl, tau, frame)) {
                 ro.acc->failed++;
-                if (per_csv) per_csv << r.name << ',' << ro.acc->name << ",,," << cl.size() << '\n';
+                if (per_csv) per_csv << r.name << ',' << ro.acc->name << ",,," << cl.size() << ",,,\n";
                 continue;
             }
             FrameError e = frameError(frame, r.gt);
@@ -661,7 +666,8 @@ int main(int argc, char** argv) {
             ro.acc->nlines.push_back((int)cl.size());
             if (per_csv)
                 per_csv << r.name << ',' << ro.acc->name << ',' << e.mean_deg << ','
-                        << e.max_deg << ',' << cl.size() << '\n';
+                        << e.max_deg << ',' << cl.size() << ',' << e.each_deg[0] << ','
+                        << e.each_deg[1] << ',' << e.each_deg[2] << '\n';
         }
 
         if (++done % 20 == 0) std::printf("  ...%d/%zu\n", done, rows.size());

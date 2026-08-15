@@ -93,6 +93,14 @@ struct Params {
     // test instead of dying piecemeal (the streaming analogue of ELSED's
     // gap jumping). Has effect only when < pixel_num_th.
     int link_admit_pix = 5;
+    // Merge rule. The default takes the two farthest-apart endpoints of the
+    // fragments, which throws away the moment fit that produced each fragment
+    // and leaves the chain's direction resting on two points. With this on the
+    // linker instead ACCUMULATES each fragment's second moments (synthesised
+    // from its endpoints and pixel count as a uniform line density) and refits
+    // the chain's direction from the combined scatter, projecting the span
+    // endpoints onto that axis. Off by default: bit-identical when off.
+    bool link_moment_fit = false;
 
     // ---- measured refinements (ON by default; the shipped configuration) ---
     // Params{} IS SweepLSD as published: every refinement below is enabled.
@@ -185,6 +193,15 @@ struct Params {
 
 // Multi-pass reference pipeline (one full-image pass per stage).
 std::vector<LineSegment> detect(const GrayImage& src, const Params& params = Params{});
+// As detect(), but each segment is paired with the pixel scatter it was fitted
+// to. The extra cost is a handful of flops per segment, not per pixel.
+//
+// CAVEAT -- one configuration does not round-trip: with link_collinear on and
+// link_moment_fit off, a merged chain has no single label whose moments describe
+// it, so this call forces linking OFF and its segments then differ from
+// detect()'s. Set link_moment_fit as well (the linker accumulates the chain's
+// scatter, so the statistics stay well defined) if you need both. There is no
+// one-pass equivalent: this is an analysis API, outside the streaming/FPGA path.
 std::vector<LineSegmentEx> detectEx(const GrayImage& src, const Params& params = Params{});
 
 // Streaming one-pass pipeline (line buffers only, O(width) memory).
