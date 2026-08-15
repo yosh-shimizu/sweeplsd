@@ -213,6 +213,26 @@ struct Labeler::Impl {
     };
     std::vector<Active> active;
 
+    // Seed a chain's scatter from the label's MEASURED covariance. The
+    // endpoint-uniform fallback below zeroes the perpendicular variance
+    // (rank-1 seed), so a linked chain's ev_min reflects only the
+    // between-fragment centroid spread — half the segments of a linked
+    // detectEx() run reported ev_min == 0 exactly, which breaks any
+    // downstream inverse-variance weighting. The label's true covariance is
+    // already computed for the aspect judgment, so use it.
+    static void seedMomentsEx(const LineSegmentEx& e, Active& a) {
+        const double n = e.pix_num > 0 ? double(e.pix_num) : 1.0;
+        const double dx = e.dir_x, dy = e.dir_y;   // unit principal axis
+        const double px = -dy, py = dx;            // unit normal
+        const double evx = e.ev_max, evn = e.ev_min;
+        a.n = n;
+        a.cx = e.cx;
+        a.cy = e.cy;
+        a.sxx = n * (evx * dx * dx + evn * px * px);
+        a.sxy = n * (evx * dx * dy + evn * px * py);
+        a.syy = n * (evx * dy * dy + evn * py * py);
+    }
+
     // Second moments of a fragment, treating it as `n` points spread uniformly
     // between its endpoints (variance along the segment is len^2/12).
     static void seedMoments(const LineSegment& g, double n, Active& a) {
@@ -365,7 +385,10 @@ struct Labeler::Impl {
         float sdx, sdy;
         unit(s, sdx, sdy);
         Active acc;  // running scatter of the chain `s` currently represents
-        if (params.link_moment_fit) seedMoments(s, pix_num, acc);
+        if (params.link_moment_fit) {
+            if (ex) seedMomentsEx(*ex, acc);
+            else seedMoments(s, pix_num, acc);
+        }
 
         bool linked = true;
         while (linked) {
@@ -526,8 +549,33 @@ struct Labeler::Impl {
         s.x1 += lshift; s.y1 += lshift;
         if (!passesNfa(L.pix_num, s)) return;
 
-        if (!want_ex) { emit(s, L.pix_num < params.pixel_num_th, nullptr,
-                             double(L.pix_num)); return; }
+        if (!want_ex) {
+            if (params.link_moment_fit) {
+                // Same Ex record as the want_ex branch below, so detect() and
+                // detectEx() seed the linker's chain scatter identically
+                // (seedMomentsEx) and stay equivalent under link_moment_fit.
+                double cxx = L.x_sq_sum / W - mux * mux;
+                double cxy = L.xy_sum / W - mux * muy;
+                double cyy = L.y_sq_sum / W - muy * muy;
+                double tr = cxx + cyy,
+                       rt = std::sqrt((cxx - cyy) * (cxx - cyy) + 4.0 * cxy * cxy);
+                double theta_n = 0.5 * std::atan2(2.0 * cxy, cxx - cyy);
+                LineSegmentEx e;
+                e.seg = s;
+                e.pix_num = int(L.pix_num);
+                e.cx = float(mux) + lshift;
+                e.cy = float(muy) + lshift;
+                e.dir_x = float(std::cos(theta_n));
+                e.dir_y = float(std::sin(theta_n));
+                e.ev_max = float(0.5 * (tr + rt));
+                e.ev_min = float(0.5 * (tr - rt));
+                emit(s, L.pix_num < params.pixel_num_th, &e, double(L.pix_num));
+                return;
+            }
+            emit(s, L.pix_num < params.pixel_num_th, nullptr,
+                 double(L.pix_num));
+            return;
+        }
         // Per-segment scatter statistics: normalised covariance (variance in
         // px^2) regardless of the weighting branch, so eigenvalues are
         // physically meaningful.
