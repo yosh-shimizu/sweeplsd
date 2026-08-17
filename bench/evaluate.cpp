@@ -181,16 +181,28 @@ double distToSegment(double px, double py, const LineSegment& s) {
 // `gt`.
 std::vector<float> genClean(int w, int h, int n_seg, unsigned seed,
                             std::vector<LineSegment>& gt,
-                            std::vector<LineSegment>& bars) {
+                            std::vector<LineSegment>& bars,
+                            double width = kBarWidth, double fg = -1.0,
+                            double par_prob = 0.0) {
+    if (fg < 0) fg = gFg;  // default: the --contrast-controlled global level
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> uAng(0.0, kPi);
     std::uniform_real_distribution<double> uLen(40.0, 200.0);
     std::uniform_real_distribution<double> uX(20.0, w - 20.0);
     std::uniform_real_distribution<double> uY(20.0, h - 20.0);
+    std::uniform_real_distribution<double> u01(0.0, 1.0);
 
     bars.clear();
     gt.clear();
-    const double off = 0.5 * kBarWidth;
+    const double off = 0.5 * width;
+    auto addBar = [&](const LineSegment& s, double nx, double ny) {
+        bars.push_back(s);
+        // Two flank edges, offset along the bar normal.
+        gt.push_back({float(s.x0 + off * nx), float(s.y0 + off * ny),
+                      float(s.x1 + off * nx), float(s.y1 + off * ny)});
+        gt.push_back({float(s.x0 - off * nx), float(s.y0 - off * ny),
+                      float(s.x1 - off * nx), float(s.y1 - off * ny)});
+    };
     for (int k = 0; k < n_seg; ++k) {
         for (int tries = 0; tries < 20; ++tries) {
             double a = uAng(rng), len = uLen(rng);
@@ -200,23 +212,31 @@ std::vector<float> genClean(int w, int h, int n_seg, unsigned seed,
             if (s.x0 < 5 || s.y0 < 5 || s.x1 < 5 || s.y1 < 5 ||
                 s.x0 > w - 5 || s.y0 > h - 5 || s.x1 > w - 5 || s.y1 > h - 5)
                 continue;
-            bars.push_back(s);
-            // Two flank edges, offset along the bar normal.
             double nx = -std::sin(a), ny = std::cos(a);
-            gt.push_back({float(s.x0 + off * nx), float(s.y0 + off * ny),
-                          float(s.x1 + off * nx), float(s.y1 + off * ny)});
-            gt.push_back({float(s.x0 - off * nx), float(s.y0 - off * ny),
-                          float(s.x1 - off * nx), float(s.y1 - off * ny)});
+            addBar(s, nx, ny);
+            // Randomized protocol only: with probability par_prob, add a close
+            // parallel neighbor (4-10 px lateral separation). The u01 draws
+            // happen only when par_prob > 0, so the standard protocol's
+            // geometry stream is untouched.
+            if (par_prob > 0 && u01(rng) < par_prob) {
+                double sep = 4.0 + 6.0 * u01(rng);
+                LineSegment p{float(s.x0 + sep * nx), float(s.y0 + sep * ny),
+                              float(s.x1 + sep * nx), float(s.y1 + sep * ny)};
+                if (p.x0 >= 5 && p.y0 >= 5 && p.x1 >= 5 && p.y1 >= 5 &&
+                    p.x0 <= w - 5 && p.y0 <= h - 5 && p.x1 <= w - 5 && p.y1 <= h - 5)
+                    addBar(p, nx, ny);
+            }
             break;
         }
     }
 
+    const int pad = int(std::ceil(off)) + 2;
     std::vector<float> buf(std::size_t(w) * h, float(kBg));
     for (const LineSegment& s : bars) {
-        int xmin = std::max(0, int(std::floor(std::min(s.x0, s.x1))) - 3);
-        int xmax = std::min(w - 1, int(std::ceil(std::max(s.x0, s.x1))) + 3);
-        int ymin = std::max(0, int(std::floor(std::min(s.y0, s.y1))) - 3);
-        int ymax = std::min(h - 1, int(std::ceil(std::max(s.y0, s.y1))) + 3);
+        int xmin = std::max(0, int(std::floor(std::min(s.x0, s.x1))) - pad);
+        int xmax = std::min(w - 1, int(std::ceil(std::max(s.x0, s.x1))) + pad);
+        int ymin = std::max(0, int(std::floor(std::min(s.y0, s.y1))) - pad);
+        int ymax = std::min(h - 1, int(std::ceil(std::max(s.y0, s.y1))) + pad);
         for (int y = ymin; y <= ymax; ++y)
             for (int x = xmin; x <= xmax; ++x) {
                 // Sample pixel (x,y) AT (x,y): the canvas, the GT lines and the
@@ -229,11 +249,38 @@ std::vector<float> genClean(int w, int h, int n_seg, unsigned seed,
                 double cov = std::max(0.0, std::min(1.0, off + 0.5 - d));  // filled bar, AA edges
                 if (cov <= 0) continue;
                 float& px = buf[std::size_t(y) * w + x];
-                float v = float(kBg + (gFg - kBg) * cov);
+                float v = float(kBg + (fg - kBg) * cov);
                 if (v < px) px = v;  // darkest wins (dark bar on light bg)
             }
     }
     return buf;
+}
+
+// Separable Gaussian blur of the clean float canvas (pre-noise defocus for
+// the randomized protocol). sigma_b < 0.05 is a no-op.
+void blurClean(std::vector<float>& buf, int w, int h, double sigma_b) {
+    if (sigma_b < 0.05) return;
+    int r = int(std::ceil(3.0 * sigma_b));
+    std::vector<double> k(2 * r + 1);
+    double sum = 0;
+    for (int i = -r; i <= r; ++i)
+        sum += k[i + r] = std::exp(-0.5 * i * i / (sigma_b * sigma_b));
+    for (double& v : k) v /= sum;
+    std::vector<float> tmp(buf.size());
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            double a = 0;
+            for (int i = -r; i <= r; ++i)
+                a += k[i + r] * buf[std::size_t(y) * w + std::min(w - 1, std::max(0, x + i))];
+            tmp[std::size_t(y) * w + x] = float(a);
+        }
+    for (int x = 0; x < w; ++x)
+        for (int y = 0; y < h; ++y) {
+            double a = 0;
+            for (int i = -r; i <= r; ++i)
+                a += k[i + r] * tmp[std::size_t(std::min(h - 1, std::max(0, y + i))) * w + x];
+            buf[std::size_t(y) * w + x] = float(a);
+        }
 }
 
 // Add Gaussian noise and quantise to 8-bit.
@@ -435,6 +482,8 @@ int main(int argc, char** argv) {
     std::vector<double> sigmas = {0, 5, 10, 20};
     std::vector<NamedConfig> configs;
     bool negatives = false;
+    int nrand = 0;
+    std::string csv_path;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--html" && i + 1 < argc) html_path = argv[++i];
@@ -457,6 +506,13 @@ int main(int argc, char** argv) {
         // --contrast D : draw the bars at kBg - D instead of the standard
         //   170-level contrast (low-contrast probe for the hysteresis).
         else if (a == "--contrast" && i + 1 < argc) gFg = kBg - std::atof(argv[++i]);
+        // --randomized N : run the randomized-scene protocol instead of the
+        //   fixed-condition one: N scenes, each with drawn bar count, width,
+        //   contrast, blur, noise, and parallel-neighbor pairs (see the
+        //   randomized block below). --csv dumps per-scene counts for the
+        //   bootstrap/slice analysis.
+        else if (a == "--randomized" && i + 1 < argc) nrand = std::atoi(argv[++i]);
+        else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
         else if (a == "--assets" && i + 1 < argc) assets_dir = argv[++i];
         else if (a == "--images" && i + 1 < argc) images = std::atoi(argv[++i]);
         else if (a == "--size" && i + 2 < argc) { w = std::atoi(argv[++i]); h = std::atoi(argv[++i]); }
@@ -562,6 +618,124 @@ int main(int argc, char** argv) {
     const std::vector<int> sweeplsd_knobs = {64, 48, 32, 24, 16, 12, 8, 5};
     const std::vector<double> lsd_knobs = {4, 3, 2, 1, 0, -1, -2};
     const std::vector<int> ed_knobs = {40, 30, 20, 15, 10, 7, 5};
+
+    // ---- Randomized-scene protocol: same generator, matcher, and knob
+    // sweeps as the fixed protocol, but every scene draws its own bar count
+    // (6-40), bar width (1.5-5 px), contrast (log-uniform 10-170 gray
+    // levels), pre-noise Gaussian blur (sigma 0-1.5 px), noise (sigma 0-20),
+    // and adds a close parallel neighbor to 30% of bars (4-10 px apart).
+    // Per-scene match counts go to --csv for the bootstrap / slice analysis;
+    // the table here reports the pooled F at each method's single pool-best
+    // operating point (one knob for the whole pool, not per condition).
+    if (nrand > 0) {
+        struct RandScene { int nbars; double width, contrast, blur, noise; };
+        std::vector<RandScene> sp(nrand);
+        auto S3 = [&](std::size_t nk) {
+            return std::vector<std::vector<Stats>>(nk, std::vector<Stats>(nrand));
+        };
+        auto st_sw = S3(sweeplsd_knobs.size());
+        auto st_swl = S3(sweeplsd_knobs.size());
+        auto st_lsd = S3(lsd_knobs.size());
+        auto st_ed = S3(ed_knobs.size());
+        auto st_edr = S3(ed_knobs.size());
+        auto st_el = S3(ed_knobs.size());
+        std::vector<std::vector<char>> got_el(ed_knobs.size(),
+                                              std::vector<char>(nrand, 0));
+        std::printf("Randomized synthetic evaluation: %dx%d, %d scenes\n\n", w, h, nrand);
+        for (int i = 0; i < nrand; ++i) {
+            std::mt19937 prng(5000u + i);
+            std::uniform_real_distribution<double> U(0.0, 1.0);
+            RandScene& P = sp[i];
+            P.nbars = 6 + int(U(prng) * 35.0);
+            P.width = 1.5 + 3.5 * U(prng);
+            P.contrast = std::exp(std::log(10.0) +
+                                  (std::log(170.0) - std::log(10.0)) * U(prng));
+            P.blur = 1.5 * U(prng);
+            P.noise = 20.0 * U(prng);
+            std::vector<LineSegment> gt, brs;
+            std::vector<float> clean = genClean(w, h, P.nbars, 6000u + i, gt, brs,
+                                                P.width, kBg - P.contrast, 0.3);
+            blurClean(clean, w, h, P.blur);
+            sweeplsd::GrayImage img = addNoise(clean, w, h, P.noise, 40000u + i);
+            if (!dump_dir.empty())
+                sweeplsd::saveGrayPng(dump_dir + "/rand_im" + std::to_string(i) + ".png", img);
+            for (std::size_t k = 0; k < sweeplsd_knobs.size(); ++k) {
+                st_sw[k][i] = matchSegments(gt, runSweeplsdImproved(img, sweeplsd_knobs[k]), tau, ang_th);
+                st_swl[k][i] = matchSegments(gt, runSweeplsdImprovedLink(img, sweeplsd_knobs[k]), tau, ang_th);
+            }
+            for (std::size_t k = 0; k < lsd_knobs.size(); ++k)
+                st_lsd[k][i] = matchSegments(gt, runLsdEps(img, lsd_knobs[k]), tau, ang_th);
+            for (std::size_t k = 0; k < ed_knobs.size(); ++k)
+                st_ed[k][i] = matchSegments(gt, runEd(img, ed_knobs[k]), tau, ang_th);
+            if (have_edreal)
+                for (std::size_t k = 0; k < ed_knobs.size(); ++k) {
+                    std::vector<LineSegment> v;
+                    readEdRealFile(edreal_dir + "/rand_im" + std::to_string(i) +
+                                   "_k" + std::to_string(k) + ".txt", v);
+                    st_edr[k][i] = matchSegments(gt, v, tau, ang_th);
+                }
+            if (have_elsed)
+                for (std::size_t k = 0; k < ed_knobs.size(); ++k) {
+                    std::vector<LineSegment> v;
+                    if (readEdRealFile(elsed_dir + "/rand_im" + std::to_string(i) +
+                                       "_k" + std::to_string(k) + ".txt", v)) {
+                        st_el[k][i] = matchSegments(gt, v, tau, ang_th);
+                        got_el[k][i] = 1;
+                    }
+                }
+            if ((i + 1) % 20 == 0) std::printf("  ...%d/%d\n", i + 1, nrand);
+        }
+
+        // per-scene dump for the bootstrap/slice analysis
+        if (!csv_path.empty()) {
+            std::FILE* f = std::fopen(csv_path.c_str(), "w");
+            std::fprintf(f, "scene,nbars,width,contrast,blur,noise,method,knob,"
+                            "tp,fp,fn,sum_lat,sum_ang,nm\n");
+            auto dump = [&](const char* name, auto& st, auto& knobs) {
+                for (std::size_t k = 0; k < st.size(); ++k)
+                    for (int i = 0; i < nrand; ++i) {
+                        if (std::string(name) == "elsed" && !got_el[k][i]) continue;
+                        const Stats& s = st[k][i];
+                        const RandScene& P = sp[i];
+                        std::fprintf(f, "%d,%d,%.3f,%.3f,%.3f,%.3f,%s,%g,%ld,%ld,%ld,%.6f,%.6f,%ld\n",
+                                     i, P.nbars, P.width, P.contrast, P.blur, P.noise,
+                                     name, double(knobs[k]), s.tp, s.fp, s.fn,
+                                     s.sum_lat, s.sum_ang, s.n_matched);
+                    }
+            };
+            dump("sweeplsd", st_sw, sweeplsd_knobs);
+            dump("sweeplsd_link", st_swl, sweeplsd_knobs);
+            dump("lsd", st_lsd, lsd_knobs);
+            dump("edstyle", st_ed, ed_knobs);
+            if (have_edreal) dump("edreal", st_edr, ed_knobs);
+            if (have_elsed) dump("elsed", st_el, ed_knobs);
+            std::fclose(f);
+            std::printf("wrote %s\n", csv_path.c_str());
+        }
+
+        // pooled report at the pool-best knob
+        std::printf("\n  %-14s %8s %7s %7s %7s %9s %8s\n",
+                    "method", "bestKnob", "F", "P", "R", "latErr", "angErr");
+        auto pooled = [&](const char* name, auto& st, auto& knobs) {
+            double bestF = -1;
+            std::size_t bk = 0;
+            std::vector<Stats> agg(st.size());
+            for (std::size_t k = 0; k < st.size(); ++k) {
+                for (int i = 0; i < nrand; ++i) agg[k].add(st[k][i]);
+                if (agg[k].f1() > bestF) { bestF = agg[k].f1(); bk = k; }
+            }
+            std::printf("  %-14s %8g %7.3f %7.3f %7.3f %7.2fpx %6.2fdeg\n",
+                        name, double(knobs[bk]), agg[bk].f1(), agg[bk].precision(),
+                        agg[bk].recall(), agg[bk].latErr(), agg[bk].angErrDeg());
+        };
+        pooled("SweepLSD", st_sw, sweeplsd_knobs);
+        pooled("SweepLSD+link", st_swl, sweeplsd_knobs);
+        pooled("LSD", st_lsd, lsd_knobs);
+        pooled("EDLines-style", st_ed, ed_knobs);
+        if (have_edreal) pooled("EDLines(ED_Lib)", st_edr, ed_knobs);
+        if (have_elsed) pooled("ELSED", st_el, ed_knobs);
+        return 0;
+    }
 
     std::printf("Synthetic evaluation: %dx%d, %d segments/image, %d images/condition\n",
                 w, h, n_seg, images);
