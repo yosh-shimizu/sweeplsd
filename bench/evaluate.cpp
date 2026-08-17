@@ -41,6 +41,7 @@
 #include <string>
 #include <vector>
 
+#include "config_spec.hpp"
 #include "edlines.hpp"
 #include "sweeplsd/io.hpp"
 #include "sweeplsd/sweeplsd.hpp"
@@ -155,6 +156,10 @@ Stats matchSegments(const std::vector<LineSegment>& gt,
 // ---------------------------------------------------------------------------
 
 constexpr double kBg = 210.0, kFg = 40.0;  // dark bars on a light background
+// Bar level actually drawn; --contrast D sets it to kBg - D (default = kFg,
+// i.e. the standard 170-level bars). Lets a low-contrast variant of the same
+// protocol probe the faint-structure regime (where the hysteresis acts).
+double gFg = kFg;
 constexpr double kBarWidth = 3.0;          // bar width; each bar = TWO edges (its flanks)
 
 double distToSegment(double px, double py, const LineSegment& s) {
@@ -224,7 +229,7 @@ std::vector<float> genClean(int w, int h, int n_seg, unsigned seed,
                 double cov = std::max(0.0, std::min(1.0, off + 0.5 - d));  // filled bar, AA edges
                 if (cov <= 0) continue;
                 float& px = buf[std::size_t(y) * w + x];
-                float v = float(kBg + (kFg - kBg) * cov);
+                float v = float(kBg + (gFg - kBg) * cov);
                 if (v < px) px = v;  // darkest wins (dark bar on light bg)
             }
     }
@@ -291,10 +296,51 @@ std::vector<LineSegment> runEd(const sweeplsd::GrayImage& src, int min_length) {
 }
 
 // ---------------------------------------------------------------------------
+// Line-free "clouds" texture for the negative (false-positive) probe: two
+// octaves of value noise with smoothstep interpolation -- C1 across cell
+// borders, so the lattice itself draws no straight creases -- normalized to
+// nearly the full 8-bit range. Contains no straight structure by construction.
+// ---------------------------------------------------------------------------
+
+std::vector<float> genClouds(int w, int h, unsigned seed) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    std::vector<double> acc(std::size_t(w) * h, 0.0);
+    auto octave = [&](int cell, double amp) {
+        int gw = w / cell + 2, gh = h / cell + 2;
+        std::vector<double> g(std::size_t(gw) * gh);
+        for (double& v : g) v = uni(rng);
+        for (int y = 0; y < h; ++y) {
+            double fy = double(y) / cell;
+            int cy = int(fy); double ty = fy - cy;
+            double sy = ty * ty * (3 - 2 * ty);
+            for (int x = 0; x < w; ++x) {
+                double fx = double(x) / cell;
+                int cx = int(fx); double tx = fx - cx;
+                double sx = tx * tx * (3 - 2 * tx);
+                double v00 = g[std::size_t(cy) * gw + cx], v10 = g[std::size_t(cy) * gw + cx + 1];
+                double v01 = g[std::size_t(cy + 1) * gw + cx], v11 = g[std::size_t(cy + 1) * gw + cx + 1];
+                double v0 = v00 + (v10 - v00) * sx;
+                double v1 = v01 + (v11 - v01) * sx;
+                acc[std::size_t(y) * w + x] += amp * (v0 + (v1 - v0) * sy);
+            }
+        }
+    };
+    octave(96, 1.0);
+    octave(32, 0.35);
+    double lo = 1e18, hi = -1e18;
+    for (double v : acc) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    std::vector<float> img(std::size_t(w) * h);
+    for (std::size_t i = 0; i < img.size(); ++i)
+        img[i] = float(20.0 + 215.0 * (acc[i] - lo) / (hi - lo));
+    return img;
+}
+
+// ---------------------------------------------------------------------------
 // PR frontier
 // ---------------------------------------------------------------------------
 
-struct PrPoint { double knob, recall, precision, f1, lat, ang; };
+struct PrPoint { double knob, recall, precision, f1, lat, ang, dets; };
 struct Curve {
     std::string method, color;
     std::vector<PrPoint> pts;  // one per knob value
@@ -387,9 +433,30 @@ int main(int argc, char** argv) {
     int w = 1280, h = 720, n_seg = 18, images = 4;
     std::string html_path, assets_dir, dump_dir, mlsd_dir, edreal_dir, elsed_dir;
     std::vector<double> sigmas = {0, 5, 10, 20};
+    std::vector<NamedConfig> configs;
+    bool negatives = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--html" && i + 1 < argc) html_path = argv[++i];
+        // --config SPEC : add an extra SweepLSD curve in the named
+        //   configuration ("full"/"2014" plus +/- toggles over {tiebreak,
+        //   subpixel, hysteresis, bboxend, curverej, lattice, link, nfa}),
+        //   swept over the same pixel_num_th knob. Repeatable.
+        else if (a == "--config" && i + 1 < argc) {
+            NamedConfig nc;
+            nc.spec = argv[++i];
+            if (!parseConfigSpec(nc.spec, nc.params)) {
+                std::fprintf(stderr, "bad --config spec: %s\n", nc.spec.c_str());
+                return 1;
+            }
+            configs.push_back(nc);
+        }
+        // --negatives : run the line-free false-positive probe instead of the
+        //   F-max protocol (see the negatives block below).
+        else if (a == "--negatives") negatives = true;
+        // --contrast D : draw the bars at kBg - D instead of the standard
+        //   170-level contrast (low-contrast probe for the hysteresis).
+        else if (a == "--contrast" && i + 1 < argc) gFg = kBg - std::atof(argv[++i]);
         else if (a == "--assets" && i + 1 < argc) assets_dir = argv[++i];
         else if (a == "--images" && i + 1 < argc) images = std::atoi(argv[++i]);
         else if (a == "--size" && i + 2 < argc) { w = std::atoi(argv[++i]); h = std::atoi(argv[++i]); }
@@ -417,6 +484,78 @@ int main(int argc, char** argv) {
     const std::vector<double> mlsd_knobs = {0.30, 0.20, 0.10, 0.05, 0.02};
     auto sigTag = [](double s) { char b[16]; std::snprintf(b, sizeof(b), "%d", (int)s); return std::string(b); };
 
+    // ---- Negative (line-free) probe: false detections on images with no
+    // straight structure -- uniform-background Gaussian noise at several
+    // sigma, plus smooth "clouds" value-noise textures (line-free by
+    // construction), with and without added noise. Every method runs at its
+    // DEFAULT operating point (the question is the shipped behavior, not a
+    // swept curve); genuine ED_Lib / ELSED results are ingested from
+    // --edreal-dir / --elsed-dir files "neg_<kind>_im<i>.txt" produced on the
+    // --dump-images PNGs. Cells are detections per image (mean/max).
+    if (negatives) {
+        struct Kind { std::string name; double sigma; bool clouds; };
+        const std::vector<Kind> kinds = {
+            {"noise5", 5, false},   {"noise10", 10, false},
+            {"noise20", 20, false}, {"noise40", 40, false},
+            {"clouds", 0, true},    {"clouds_n10", 10, true}};
+        std::printf("Negative probe: %dx%d, %d images/kind; detections at default settings\n\n",
+                    w, h, images);
+        std::printf("  %-11s %13s %13s %13s %13s", "kind",
+                    "sweeplsd", "sweeplsd+NFA", "LSD", "EDLines-style");
+        if (have_edreal) std::printf(" %13s", "ED_Lib");
+        if (have_elsed) std::printf(" %13s", "ELSED");
+        std::printf("   (mean/max per image)\n");
+        for (std::size_t ki = 0; ki < kinds.size(); ++ki) {
+            const Kind& kind = kinds[ki];
+            struct Acc {
+                long tot = 0, mx = 0;
+                void add(long n) { tot += n; mx = std::max(mx, n); }
+            };
+            Acc a_sw, a_nfa, a_lsd, a_ed, a_edr, a_el;
+            for (int im = 0; im < images; ++im) {
+                std::vector<float> canvas = kind.clouds
+                    ? genClouds(w, h, 3000u + 17u * (unsigned)ki + im)
+                    : std::vector<float>(std::size_t(w) * h, float(kBg));
+                sweeplsd::GrayImage img =
+                    addNoise(canvas, w, h, kind.sigma, 9000u + 100u * (unsigned)ki + im);
+                if (!dump_dir.empty())
+                    sweeplsd::saveGrayPng(dump_dir + "/neg_" + kind.name + "_im" +
+                                          std::to_string(im) + ".png", img);
+                sweeplsd::Params pdef;  // shipped defaults
+                a_sw.add((long)sweeplsd::detect(img, pdef).size());
+                sweeplsd::Params pnfa;  // shipped defaults + streaming NFA gate
+                pnfa.use_nfa = true;
+                a_nfa.add((long)sweeplsd::detect(img, pnfa).size());
+                a_lsd.add((long)runLsdEps(img, 0.0).size());
+                a_ed.add((long)runEd(img, 10).size());
+                if (have_edreal) {
+                    std::vector<LineSegment> v;
+                    readEdRealFile(edreal_dir + "/neg_" + kind.name + "_im" +
+                                   std::to_string(im) + ".txt", v);
+                    a_edr.add((long)v.size());
+                }
+                if (have_elsed) {
+                    std::vector<LineSegment> v;
+                    readEdRealFile(elsed_dir + "/neg_" + kind.name + "_im" +
+                                   std::to_string(im) + ".txt", v);
+                    a_el.add((long)v.size());
+                }
+            }
+            auto cell = [&](const Acc& a) {
+                char b[32];
+                std::snprintf(b, sizeof(b), "%.1f/%ld", double(a.tot) / images, a.mx);
+                return std::string(b);
+            };
+            std::printf("  %-11s %13s %13s %13s %13s", kind.name.c_str(),
+                        cell(a_sw).c_str(), cell(a_nfa).c_str(),
+                        cell(a_lsd).c_str(), cell(a_ed).c_str());
+            if (have_edreal) std::printf(" %13s", cell(a_edr).c_str());
+            if (have_elsed) std::printf(" %13s", cell(a_el).c_str());
+            std::printf("\n");
+        }
+        return 0;
+    }
+
     const double tau = 2.0;                  // lateral matching tolerance (px); < bar width so
                                              // a flank detection matches its own edge, not the other
     const double ang_th = 10.0 * kPi / 180;  // angular matching tolerance
@@ -443,6 +582,8 @@ int main(int argc, char** argv) {
         std::vector<Stats> acc_sweeplsd(sweeplsd_knobs.size());
         std::vector<Stats> acc_sweeplsd_imp(sweeplsd_knobs.size());
         std::vector<Stats> acc_sweeplsd_implink(sweeplsd_knobs.size());
+        std::vector<std::vector<Stats>> acc_cfg(
+            configs.size(), std::vector<Stats>(sweeplsd_knobs.size()));
         std::vector<Stats> acc_lsd(lsd_knobs.size());
         std::vector<Stats> acc_ed(ed_knobs.size());
         std::vector<Stats> acc_mlsd(mlsd_knobs.size());
@@ -465,6 +606,12 @@ int main(int argc, char** argv) {
                 acc_sweeplsd_imp[k].add(matchSegments(gt, runSweeplsdImproved(img, sweeplsd_knobs[k]), tau, ang_th));
             for (std::size_t k = 0; k < sweeplsd_knobs.size(); ++k)
                 acc_sweeplsd_implink[k].add(matchSegments(gt, runSweeplsdImprovedLink(img, sweeplsd_knobs[k]), tau, ang_th));
+            for (std::size_t ci = 0; ci < configs.size(); ++ci)
+                for (std::size_t k = 0; k < sweeplsd_knobs.size(); ++k) {
+                    sweeplsd::Params p = configs[ci].params;
+                    p.pixel_num_th = sweeplsd_knobs[k];
+                    acc_cfg[ci][k].add(matchSegments(gt, sweeplsd::detect(img, p), tau, ang_th));
+                }
             for (std::size_t k = 0; k < lsd_knobs.size(); ++k)
                 acc_lsd[k].add(matchSegments(gt, runLsdEps(img, lsd_knobs[k]), tau, ang_th));
             for (std::size_t k = 0; k < ed_knobs.size(); ++k)
@@ -499,7 +646,8 @@ int main(int argc, char** argv) {
             Curve c; c.method = name; c.color = color;
             for (std::size_t k = 0; k < acc.size(); ++k)
                 c.pts.push_back({double(knobs[k]), acc[k].recall(), acc[k].precision(),
-                                 acc[k].f1(), acc[k].latErr(), acc[k].angErrDeg()});
+                                 acc[k].f1(), acc[k].latErr(), acc[k].angErrDeg(),
+                                 double(acc[k].tp + acc[k].fp) / images});
             finalizeCurve(c);
             return c;
         };
@@ -508,6 +656,13 @@ int main(int argc, char** argv) {
         cond.curves.push_back(buildCurve("SweepLSD", "#1769aa", acc_sweeplsd, sweeplsd_knobs));
         cond.curves.push_back(buildCurve("SweepLSD-improved", "#7b2d8b", acc_sweeplsd_imp, sweeplsd_knobs));
         cond.curves.push_back(buildCurve("SweepLSD-imp+link", "#c0497a", acc_sweeplsd_implink, sweeplsd_knobs));
+        static const char* kCfgColors[] = {"#555555", "#8a6d3b", "#3b8a6d",
+                                           "#6d3b8a", "#a04040", "#4040a0",
+                                           "#7a7a20", "#207a7a"};
+        for (std::size_t ci = 0; ci < configs.size(); ++ci)
+            cond.curves.push_back(buildCurve("cfg " + configs[ci].spec,
+                                             kCfgColors[ci % 8],
+                                             acc_cfg[ci], sweeplsd_knobs));
         cond.curves.push_back(buildCurve("LSD", "#e8820c", acc_lsd, lsd_knobs));
         if (have_edreal)
             cond.curves.push_back(buildCurve("EDLines (ED_Lib)", "#2e9e4f", acc_edreal, ed_knobs));
@@ -524,12 +679,12 @@ int main(int argc, char** argv) {
             cond.curves.push_back(buildCurve("M-LSD", "#d62878", acc_mlsd, mlsd_knobs));
 
         std::printf("noise sigma = %.0f\n", sigma);
-        std::printf("  %-14s %6s %6s %7s %7s %9s %8s\n",
-                    "method", "F-max", "AP", "P@best", "R@best", "latErr", "angErr");
+        std::printf("  %-52s %6s %6s %7s %7s %9s %8s %7s\n",
+                    "method", "F-max", "AP", "P@best", "R@best", "latErr", "angErr", "dets");
         for (const Curve& c : cond.curves)
-            std::printf("  %-14s %6.3f %6.3f %7.3f %7.3f %7.2fpx %6.2fdeg\n",
+            std::printf("  %-52s %6.3f %6.3f %7.3f %7.3f %7.2fpx %6.2fdeg %7.1f\n",
                         c.method.c_str(), c.fmax, c.ap, c.best.precision, c.best.recall,
-                        c.best.lat, c.best.ang);
+                        c.best.lat, c.best.ang, c.best.dets);
         std::printf("\n");
         conditions.push_back(std::move(cond));
     }

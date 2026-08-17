@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -34,6 +35,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "config_spec.hpp"
 #include "edlines.hpp"
 #include "sweeplsd/io.hpp"
 #include "sweeplsd/sweeplsd.hpp"
@@ -508,6 +510,7 @@ int main(int argc, char** argv) {
     std::string manifest_path, html_path, assets_dir, gtlines_path, mlsd_dir, edreal_dir,
         elsed_dir, per_csv_path;
     bool only_external = false;
+    std::vector<NamedConfig> configs;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--html" && i + 1 < argc) html_path = argv[++i];
@@ -525,6 +528,19 @@ int main(int argc, char** argv) {
         // need the per-image pairing. Off by default; does not affect the run.
         else if (a == "--per-csv" && i + 1 < argc) per_csv_path = argv[++i];
         else if (a == "--only-external") only_external = true;
+        // --config SPEC : additionally evaluate SweepLSD in the named
+        //   configuration (see bench/config_spec.hpp) through the identical
+        //   fixed estimator. Repeatable; used for the ablation and the
+        //   hardware-configuration downstream check.
+        else if (a == "--config" && i + 1 < argc) {
+            NamedConfig nc;
+            nc.spec = argv[++i];
+            if (!parseConfigSpec(nc.spec, nc.params)) {
+                std::fprintf(stderr, "bad --config spec: %s\n", nc.spec.c_str());
+                return 1;
+            }
+            configs.push_back(nc);
+        }
         else if (!a.empty() && a[0] != '-') manifest_path = a;
     }
     if (manifest_path.empty()) {
@@ -594,6 +610,8 @@ int main(int argc, char** argv) {
     Acc sweeplsd_a{"SweepLSD"}, sweeplsd_imp_a{"SweepLSD-improved"}, sweeplsd_implink_a{"SweepLSD-imp+link"},
         lsd_a{"LSD"}, ed_a{"EDLines-style"}, edreal_a{"EDLines (ED_Lib)"}, mlsd_a{"M-LSD"},
         elsed_a{"ELSED"}, ceil_a{"GT lines (ceiling)"};
+    std::deque<Acc> cfg_accs;  // deque: stable addresses for the RunOne pointers
+    for (const NamedConfig& nc : configs) cfg_accs.push_back(Acc{"cfg " + nc.spec});
     const bool have_mlsd = !mlsd_dir.empty();
     const bool have_edreal = !edreal_dir.empty();
     const bool have_elsed = !elsed_dir.empty();
@@ -643,10 +661,13 @@ int main(int argc, char** argv) {
         // many synthetic line sets through the same estimator; without this it
         // would re-run every detector on all 102 images for each condition.
         std::vector<RunOne> runs;
-        if (!only_external)
+        if (!only_external) {
             runs = {{&sweeplsd_a, runSweeplsd(gray)}, {&sweeplsd_imp_a, runSweeplsdImp(gray)},
                     {&sweeplsd_implink_a, runSweeplsdImpLink(gray)},
                     {&lsd_a, runLsd(gray)}, {&ed_a, runEd(gray)}};
+            for (std::size_t ci = 0; ci < configs.size(); ++ci)
+                runs.push_back({&cfg_accs[ci], sweeplsd::detect(gray, configs[ci].params)});
+        }
         if (have_edreal) runs.push_back({&edreal_a, runEdReal(r.name)});
         if (have_mlsd) runs.push_back({&mlsd_a, runMlsd(r.name)});
         if (have_elsed) runs.push_back({&elsed_a, runElsed(r.name)});
@@ -679,6 +700,7 @@ int main(int argc, char** argv) {
     std::printf("  %-26s %5s %5s %10s %10s %8s %8s %8s\n", "method", "imgs", "fail",
                 "medMeanErr", "medMaxErr", "%<2deg", "%<5deg", "medLines");
     std::vector<const Acc*> table = {&sweeplsd_a, &sweeplsd_imp_a, &sweeplsd_implink_a, &lsd_a, &ed_a};
+    for (const Acc& a : cfg_accs) table.push_back(&a);
     if (have_edreal) table.push_back(&edreal_a);
     if (have_mlsd) table.push_back(&mlsd_a);
     if (have_elsed) table.push_back(&elsed_a);
