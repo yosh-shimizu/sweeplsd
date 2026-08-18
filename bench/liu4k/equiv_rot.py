@@ -78,6 +78,38 @@ def recall(A, B, mid_th=6.0, ang_th=5.0, lr=0.6):
     return 100.0 * hit / len(A)
 
 
+def one_to_one(A, B, mid_th=6.0, ang_th=5.0, lr=0.6):
+    """Greedy one-to-one matching (closest midpoints first) with the same
+    thresholds as recall(); returns the number of matched pairs. Used by the
+    symmetric metrics: unlike recall(), a B segment can serve only one A."""
+    Af = [feats(s) for s in A]
+    Bf = [feats(s) for s in B]
+    grid = defaultdict(list)
+    for i, (mx, my, _, _) in enumerate(Bf):
+        grid[(int(mx // mid_th), int(my // mid_th))].append(i)
+    pairs = []
+    for ai, (amx, amy, aang, aL) in enumerate(Af):
+        cx, cy = int(amx // mid_th), int(amy // mid_th)
+        for gx in (cx - 1, cx, cx + 1):
+            for gy in (cy - 1, cy, cy + 1):
+                for bi in grid.get((gx, gy), ()):
+                    bmx, bmy, bang, bL = Bf[bi]
+                    d = math.hypot(amx - bmx, amy - bmy)
+                    if d <= mid_th and adiff(aang, bang) <= ang_th \
+                       and bL >= 1 and min(aL, bL) / max(aL, bL) >= lr:
+                        pairs.append((d, ai, bi))
+    pairs.sort(key=lambda t: t[0])
+    ua, ub = set(), set()
+    n = 0
+    for _, ai, bi in pairs:
+        if ai in ua or bi in ub:
+            continue
+        ua.add(ai)
+        ub.add(bi)
+        n += 1
+    return n
+
+
 def load_segs(path):
     segs = defaultdict(list)
     with open(path, newline="") as f:
@@ -131,6 +163,7 @@ def cmd_analyze(args):
         idsegs = load_segs(os.path.join(args.eq, f"all_{det}", "segs.csv"))
         rotsegs = load_segs(os.path.join(args.rot, f"all_{det}", "segs.csv"))
         per_angle = defaultdict(list)
+        per_angle_sym = defaultdict(list)
         for fr, base, ang, W, H in rot_rows:
             if base not in idman:
                 continue
@@ -162,6 +195,27 @@ def cmd_analyze(args):
             r = recall(A, B)
             if r is not None:
                 per_angle[ang].append(r)
+            # Symmetric one-to-one metrics: B mirror-guarded exactly like A
+            # (endpoints >= margin inside the rotated canvas AND mapped-back
+            # endpoints >= margin2 inside the original frame), so extra
+            # segments invented after rotation are penalized (mapped-back
+            # precision), not just missing ones (recall).
+            Bs = []
+            for s in rotsegs.get(fr, []):
+                if not (m <= s[0] <= W - 1 - m and m <= s[1] <= H - 1 - m and
+                        m <= s[2] <= W - 1 - m and m <= s[3] <= H - 1 - m):
+                    continue
+                bx0, by0 = apply_m(Minv, s[0], s[1])
+                bx1, by1 = apply_m(Minv, s[2], s[3])
+                if (m2 <= bx0 <= W - 1 - m2 and m2 <= by0 <= H - 1 - m2 and
+                        m2 <= bx1 <= W - 1 - m2 and m2 <= by1 <= H - 1 - m2):
+                    Bs.append((bx0, by0, bx1, by1))
+            if A:
+                nm = one_to_one(A, Bs) if Bs else 0
+                prec = 100.0 * nm / len(Bs) if Bs else None
+                rec1 = 100.0 * nm / len(A)
+                f1 = 200.0 * nm / (len(A) + len(Bs)) if (A or Bs) else None
+                per_angle_sym[ang].append((prec, rec1, f1))
         print(f"=== {LABEL[det]} ===")
         for ang in sorted(per_angle):
             v = per_angle[ang]
@@ -169,6 +223,14 @@ def cmd_analyze(args):
                   f"(n={len(v)} images)")
         pooled = [x for ang in per_angle for x in per_angle[ang]]
         print(f"  pooled median over all angles: {st.median(pooled):5.1f}%")
+        print("  symmetric one-to-one (endpoint-guarded both ways):")
+        for ang in sorted(per_angle_sym):
+            v = per_angle_sym[ang]
+            ps = [p for p, _, _ in v if p is not None]
+            rs = [r for _, r, _ in v]
+            fs = [f for _, _, f in v if f is not None]
+            print(f"  rot{ang:>4g}  P {st.median(ps):5.1f}  R {st.median(rs):5.1f}"
+                  f"  F1 {st.median(fs):5.1f}   (n={len(v)} images)")
 
 
 def main():

@@ -113,9 +113,16 @@ struct Stats {
     double angErrDeg() const { return n_matched ? sum_ang / n_matched * 180.0 / kPi : 0.0; }
 };
 
-// Greedy one-to-one matching of detections to GT.
+// Per-GT-segment match record (optional matchSegments output, for the
+// intersection analysis of the randomized protocol).
+struct PerGT { char matched = 0; float lat = 0, ang = 0; };
+
+// Greedy one-to-one matching of detections to GT. If `per` is non-null it is
+// resized to gt.size() and filled with the per-GT match outcome.
 Stats matchSegments(const std::vector<LineSegment>& gt,
-                    const std::vector<LineSegment>& det, double tau, double ang_th) {
+                    const std::vector<LineSegment>& det, double tau, double ang_th,
+                    std::vector<PerGT>* per = nullptr) {
+    if (per) per->assign(gt.size(), PerGT{});
     struct Cand { double overlap; int gi, di; double lat, ang; };
     std::vector<Cand> cands;
     for (int di = 0; di < (int)det.size(); ++di) {
@@ -145,6 +152,7 @@ Stats matchSegments(const std::vector<LineSegment>& gt,
         g_used[c.gi] = d_used[c.di] = 1;
         ++s.tp; ++s.n_matched;
         s.sum_lat += c.lat; s.sum_ang += c.ang;
+        if (per) (*per)[c.gi] = {1, float(c.lat), float(c.ang)};
     }
     s.fp = (long)det.size() - s.tp;
     s.fn = (long)gt.size() - s.tp;
@@ -482,8 +490,10 @@ int main(int argc, char** argv) {
     std::vector<double> sigmas = {0, 5, 10, 20};
     std::vector<NamedConfig> configs;
     bool negatives = false;
+    bool junctions = false;
     int nrand = 0;
     std::string csv_path;
+    std::string perseg_path;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--html" && i + 1 < argc) html_path = argv[++i];
@@ -503,6 +513,11 @@ int main(int argc, char** argv) {
         // --negatives : run the line-free false-positive probe instead of the
         //   F-max protocol (see the negatives block below).
         else if (a == "--negatives") negatives = true;
+        // --junctions : run the junction endpoint probe instead (see the
+        //   junctions block below): projection-extreme vs first-contact
+        //   endpoints on T/X-junction scenes, scored against the analytically
+        //   visible sub-extents of the subject bar's flank edges.
+        else if (a == "--junctions") junctions = true;
         // --contrast D : draw the bars at kBg - D instead of the standard
         //   170-level contrast (low-contrast probe for the hysteresis).
         else if (a == "--contrast" && i + 1 < argc) gFg = kBg - std::atof(argv[++i]);
@@ -513,6 +528,13 @@ int main(int argc, char** argv) {
         //   bootstrap/slice analysis.
         else if (a == "--randomized" && i + 1 < argc) nrand = std::atoi(argv[++i]);
         else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
+        // --perseg CSV : with --randomized, also dump one row per matched GT
+        //   segment per (method, knob) -- plus "gt" rows carrying each GT
+        //   segment's length/orientation and a gi=-1 marker row per
+        //   (method, knob, scene) that ran (distinguishes "no matches" from
+        //   "no data" for the ingested detectors). For the matched-by-all
+        //   intersection analysis.
+        else if (a == "--perseg" && i + 1 < argc) perseg_path = argv[++i];
         else if (a == "--assets" && i + 1 < argc) assets_dir = argv[++i];
         else if (a == "--images" && i + 1 < argc) images = std::atoi(argv[++i]);
         else if (a == "--size" && i + 2 < argc) { w = std::atoi(argv[++i]); h = std::atoi(argv[++i]); }
@@ -642,6 +664,11 @@ int main(int argc, char** argv) {
         std::vector<std::vector<char>> got_el(ed_knobs.size(),
                                               std::vector<char>(nrand, 0));
         std::printf("Randomized synthetic evaluation: %dx%d, %d scenes\n\n", w, h, nrand);
+        std::FILE* fper = nullptr;
+        if (!perseg_path.empty()) {
+            fper = std::fopen(perseg_path.c_str(), "w");
+            std::fprintf(fper, "scene,method,knob,gi,lat,ang\n");
+        }
         for (int i = 0; i < nrand; ++i) {
             std::mt19937 prng(5000u + i);
             std::uniform_real_distribution<double> U(0.0, 1.0);
@@ -659,31 +686,52 @@ int main(int argc, char** argv) {
             sweeplsd::GrayImage img = addNoise(clean, w, h, P.noise, 40000u + i);
             if (!dump_dir.empty())
                 sweeplsd::saveGrayPng(dump_dir + "/rand_im" + std::to_string(i) + ".png", img);
+            if (fper)
+                for (int gi = 0; gi < (int)gt.size(); ++gi)
+                    std::fprintf(fper, "%d,gt,0,%d,%.6f,%.6f\n", i, gi,
+                                 segLength(gt[gi]), segOrient(gt[gi]));
+            std::vector<PerGT> per;
+            auto score = [&](const char* name, double knob,
+                             const std::vector<LineSegment>& v) {
+                Stats s = matchSegments(gt, v, tau, ang_th, fper ? &per : nullptr);
+                if (fper) {
+                    std::fprintf(fper, "%d,%s,%g,-1,0,0\n", i, name, knob);
+                    for (int gi = 0; gi < (int)gt.size(); ++gi)
+                        if (per[gi].matched)
+                            std::fprintf(fper, "%d,%s,%g,%d,%.6f,%.6f\n", i, name,
+                                         knob, gi, per[gi].lat, per[gi].ang);
+                }
+                return s;
+            };
             for (std::size_t k = 0; k < sweeplsd_knobs.size(); ++k) {
-                st_sw[k][i] = matchSegments(gt, runSweeplsdImproved(img, sweeplsd_knobs[k]), tau, ang_th);
-                st_swl[k][i] = matchSegments(gt, runSweeplsdImprovedLink(img, sweeplsd_knobs[k]), tau, ang_th);
+                st_sw[k][i] = score("sweeplsd", sweeplsd_knobs[k], runSweeplsdImproved(img, sweeplsd_knobs[k]));
+                st_swl[k][i] = score("sweeplsd_link", sweeplsd_knobs[k], runSweeplsdImprovedLink(img, sweeplsd_knobs[k]));
             }
             for (std::size_t k = 0; k < lsd_knobs.size(); ++k)
-                st_lsd[k][i] = matchSegments(gt, runLsdEps(img, lsd_knobs[k]), tau, ang_th);
+                st_lsd[k][i] = score("lsd", lsd_knobs[k], runLsdEps(img, lsd_knobs[k]));
             for (std::size_t k = 0; k < ed_knobs.size(); ++k)
-                st_ed[k][i] = matchSegments(gt, runEd(img, ed_knobs[k]), tau, ang_th);
+                st_ed[k][i] = score("edstyle", ed_knobs[k], runEd(img, ed_knobs[k]));
             if (have_edreal)
                 for (std::size_t k = 0; k < ed_knobs.size(); ++k) {
                     std::vector<LineSegment> v;
                     readEdRealFile(edreal_dir + "/rand_im" + std::to_string(i) +
                                    "_k" + std::to_string(k) + ".txt", v);
-                    st_edr[k][i] = matchSegments(gt, v, tau, ang_th);
+                    st_edr[k][i] = score("edreal", ed_knobs[k], v);
                 }
             if (have_elsed)
                 for (std::size_t k = 0; k < ed_knobs.size(); ++k) {
                     std::vector<LineSegment> v;
                     if (readEdRealFile(elsed_dir + "/rand_im" + std::to_string(i) +
                                        "_k" + std::to_string(k) + ".txt", v)) {
-                        st_el[k][i] = matchSegments(gt, v, tau, ang_th);
+                        st_el[k][i] = score("elsed", ed_knobs[k], v);
                         got_el[k][i] = 1;
                     }
                 }
             if ((i + 1) % 20 == 0) std::printf("  ...%d/%d\n", i + 1, nrand);
+        }
+        if (fper) {
+            std::fclose(fper);
+            std::printf("wrote %s\n", perseg_path.c_str());
         }
 
         // per-scene dump for the bootstrap/slice analysis
@@ -734,6 +782,214 @@ int main(int argc, char** argv) {
         pooled("EDLines-style", st_ed, ed_knobs);
         if (have_edreal) pooled("EDLines(ED_Lib)", st_edr, ed_knobs);
         if (have_elsed) pooled("ELSED", st_el, ed_knobs);
+        return 0;
+    }
+
+    // ---- Junction endpoint probe (--junctions): the projection-extreme
+    // endpoint rule (endpoint_from_bbox) vs the 2014 first-contact rule on
+    // scenes where a component grazes more than two endpoint candidates.
+    // One long "subject" bar is crossed (X) or abutted (T) by 1-4 short bars
+    // at 60-90 deg; control scenes have no junction. The toggle changes only
+    // the once-per-segment finalization, so BOTH rules run on identical
+    // components -- a paired comparison. A junction locally occludes the
+    // subject's flank edge (dark meets dark, no intensity step), so the
+    // reference is the analytically visible sub-extents of each flank, and
+    // the score per recovered interval [a,b] is the endpoint extent error
+    // |t_lo - a| + |t_hi - b| of the best-overlap detection.
+    if (junctions) {
+        struct JKind { const char* name; int njmax; bool tee; bool graze; double sigma; };
+        const std::vector<JKind> jkinds = {
+            {"control", 0, false, false, 0}, {"X", 4, false, false, 0},
+            {"T", 4, true, false, 0},        {"graze", 4, false, true, 0},
+            {"X_n5", 4, false, false, 5},    {"T_n5", 4, true, false, 5},
+            {"graze_n5", 4, false, true, 5}};
+        const int nscene = 200;
+        sweeplsd::Params p_ext = sweeplsd::Params::improved();
+        sweeplsd::Params p_fc = p_ext;
+        p_fc.endpoint_from_bbox = false;
+        std::printf("Junction endpoint probe: %dx%d, %d scenes/kind, "
+                    "projection-extreme (ext) vs first-contact (fc)\n\n",
+                    w, h, nscene);
+        auto med = [](std::vector<double> v) {
+            if (v.empty()) return 0.0;
+            std::sort(v.begin(), v.end());
+            std::size_t n = v.size();
+            return n % 2 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+        };
+        for (const JKind& jk : jkinds) {
+            long total = 0;
+            long rec[2] = {0, 0};
+            std::vector<double> errs[2], diffs;
+            long wins = 0, loss = 0;
+            for (int i = 0; i < nscene; ++i) {
+                std::mt19937 rng(unsigned(7000 + 1000 * (&jk - &jkinds[0]) + i));
+                std::uniform_real_distribution<double> U(0.0, 1.0);
+                // subject bar, fully inside a 40 px margin
+                double sa = 0, slen = 0, sx0 = 0, sy0 = 0;
+                for (int tries = 0; tries < 100; ++tries) {
+                    sa = U(rng) * kPi;
+                    slen = 300.0 + 200.0 * U(rng);
+                    double cx = 40.0 + (w - 80.0) * U(rng);
+                    double cy = 40.0 + (h - 80.0) * U(rng);
+                    double hx = 0.5 * slen * std::cos(sa);
+                    double hy = 0.5 * slen * std::sin(sa);
+                    if (cx - std::abs(hx) < 40 || cx + std::abs(hx) > w - 40 ||
+                        cy - std::abs(hy) < 40 || cy + std::abs(hy) > h - 40)
+                        continue;
+                    sx0 = cx - hx; sy0 = cy - hy;
+                    break;
+                }
+                double ux = std::cos(sa), uy = std::sin(sa);
+                LineSegment subject{float(sx0), float(sy0),
+                                    float(sx0 + slen * ux), float(sy0 + slen * uy)};
+                // per-bar half-widths: the subject keeps the protocol's 3 px
+                // bar; crossers are WIDE (6-16 px) so the junction genuinely
+                // interrupts the flank edge (a 3 px crosser's ~4 px occlusion
+                // is washed out by the Gaussian and never cuts the run).
+                struct JBar { LineSegment s; double halfw; };
+                const double off = 0.5 * kBarWidth;
+                std::vector<JBar> bars{{subject, off}};
+                int nj = jk.njmax ? 1 + int(U(rng) * jk.njmax) : 0;
+                if (nj > jk.njmax) nj = jk.njmax;
+                double nx0 = -uy, ny0 = ux;
+                for (int j = 0; j < nj; ++j) {
+                    double t = (0.15 + 0.7 * U(rng)) * slen;
+                    double jx = sx0 + t * ux, jy = sy0 + t * uy;
+                    LineSegment c;
+                    double chw;
+                    if (jk.graze) {
+                        // "graze" kind: a THIN bar whose tip stops 1-2.5 px
+                        // short of the subject's flank surface -- no occlusion,
+                        // but the tip's line-end candidates sit 8-adjacent to
+                        // the flank's interior run (a mid-run contact without a
+                        // cut: the >2-candidate graze the endpoint rule guards
+                        // against).
+                        chw = off;  // same 3 px bar as the subject
+                        double sgn = U(rng) < 0.5 ? 1.0 : -1.0;
+                        double gap = 1.0 + 1.5 * U(rng);
+                        double tipx = jx + sgn * (off + chw + gap) * nx0;
+                        double tipy = jy + sgn * (off + chw + gap) * ny0;
+                        double base = std::atan2(sgn * ny0, sgn * nx0);
+                        double ca = base + (U(rng) - 0.5) * (60.0 * kPi / 180.0);
+                        double clen = 60.0 + 90.0 * U(rng);
+                        c = LineSegment{float(tipx), float(tipy),
+                                        float(tipx + clen * std::cos(ca)),
+                                        float(tipy + clen * std::sin(ca))};
+                    } else {
+                        double d = (60.0 + 30.0 * U(rng)) * kPi / 180.0;
+                        if (U(rng) < 0.5) d = -d;
+                        double ca = sa + d, clen = 60.0 + 90.0 * U(rng);
+                        chw = 3.0 + 5.0 * U(rng);
+                        c = jk.tee
+                            ? LineSegment{float(jx), float(jy),
+                                          float(jx + clen * std::cos(ca)),
+                                          float(jy + clen * std::sin(ca))}
+                            : LineSegment{float(jx - 0.5 * clen * std::cos(ca)),
+                                          float(jy - 0.5 * clen * std::sin(ca)),
+                                          float(jx + 0.5 * clen * std::cos(ca)),
+                                          float(jy + 0.5 * clen * std::sin(ca))};
+                    }
+                    bars.push_back({c, chw});
+                }
+                // render: same darkest-wins AA fill as genClean
+                std::vector<float> buf(std::size_t(w) * h, float(kBg));
+                for (const JBar& jb : bars) {
+                    const LineSegment& s = jb.s;
+                    const int pad = int(std::ceil(jb.halfw)) + 2;
+                    int xmin = std::max(0, int(std::floor(std::min(s.x0, s.x1))) - pad);
+                    int xmax = std::min(w - 1, int(std::ceil(std::max(s.x0, s.x1))) + pad);
+                    int ymin = std::max(0, int(std::floor(std::min(s.y0, s.y1))) - pad);
+                    int ymax = std::min(h - 1, int(std::ceil(std::max(s.y0, s.y1))) + pad);
+                    for (int y = ymin; y <= ymax; ++y)
+                        for (int x = xmin; x <= xmax; ++x) {
+                            double d = distToSegment(double(x), double(y), s);
+                            double cov = std::max(0.0, std::min(1.0, jb.halfw + 0.5 - d));
+                            if (cov <= 0) continue;
+                            float& px = buf[std::size_t(y) * w + x];
+                            float v = float(kBg + (gFg - kBg) * cov);
+                            if (v < px) px = v;
+                        }
+                }
+                sweeplsd::GrayImage img =
+                    addNoise(buf, w, h, jk.sigma, unsigned(45000 + i));
+                if (!dump_dir.empty() && i < 4)
+                    sweeplsd::saveGrayPng(dump_dir + "/junc_" + std::string(jk.name) +
+                                          "_im" + std::to_string(i) + ".png", img);
+                auto dets_ext = sweeplsd::detect(img, p_ext);
+                auto dets_fc = sweeplsd::detect(img, p_fc);
+                // visible sub-intervals of the two flank edges
+                double nx = -uy, ny = ux;
+                for (int f = 0; f < 2; ++f) {
+                    double sgn = f ? -1.0 : 1.0;
+                    LineSegment flank{
+                        float(sx0 + sgn * off * nx), float(sy0 + sgn * off * ny),
+                        float(sx0 + sgn * off * nx + slen * ux),
+                        float(sy0 + sgn * off * ny + slen * uy)};
+                    std::vector<std::pair<double, double>> iv;
+                    double a0 = -1.0;
+                    const double step = 0.25;
+                    for (double t = 0.0; t <= slen + 1e-9; t += step) {
+                        double px = flank.x0 + t * ux, py = flank.y0 + t * uy;
+                        bool vis = true;
+                        for (std::size_t b = 1; b < bars.size(); ++b)
+                            if (distToSegment(px, py, bars[b].s) <=
+                                bars[b].halfw + 0.5) {
+                                vis = false;
+                                break;
+                            }
+                        if (vis && a0 < 0) a0 = t;
+                        if (!vis && a0 >= 0) { iv.push_back({a0, t - step}); a0 = -1; }
+                    }
+                    if (a0 >= 0) iv.push_back({a0, slen});
+                    for (const auto& [ia, ib] : iv) {
+                        if (ib - ia < 24.0) continue;
+                        ++total;
+                        double e[2];
+                        bool ok[2];
+                        const std::vector<LineSegment>* dd[2] = {&dets_ext, &dets_fc};
+                        for (int cfg = 0; cfg < 2; ++cfg) {
+                            double best_ov = 0, bt0 = 0, bt1 = 0;
+                            double fo = segOrient(flank);
+                            for (const LineSegment& ds : *dd[cfg]) {
+                                if (orientDiff(segOrient(ds), fo) > ang_th) continue;
+                                double q0, t0, q1, t1;
+                                pointToLine(flank, ds.x0, ds.y0, q0, t0);
+                                pointToLine(flank, ds.x1, ds.y1, q1, t1);
+                                if (q0 > tau || q1 > tau) continue;
+                                double lo = std::min(t0, t1), hi = std::max(t0, t1);
+                                double ov = std::min(hi, ib) - std::max(lo, ia);
+                                if (ov > best_ov) { best_ov = ov; bt0 = lo; bt1 = hi; }
+                            }
+                            ok[cfg] = best_ov >= 0.5 * (ib - ia);
+                            e[cfg] = ok[cfg] ? std::abs(bt0 - ia) + std::abs(bt1 - ib) : 0.0;
+                            if (ok[cfg]) { ++rec[cfg]; errs[cfg].push_back(e[cfg]); }
+                        }
+                        if (ok[0] && ok[1]) {
+                            double dfc = e[1] - e[0];  // >0: extreme rule better
+                            diffs.push_back(dfc);
+                            if (dfc > 1e-9) ++wins;
+                            else if (dfc < -1e-9) ++loss;
+                        }
+                    }
+                }
+            }
+            double mean0 = 0, mean1 = 0, dmean = 0;
+            for (double v : errs[0]) mean0 += v;
+            for (double v : errs[1]) mean1 += v;
+            for (double v : diffs) dmean += v;
+            if (!errs[0].empty()) mean0 /= errs[0].size();
+            if (!errs[1].empty()) mean1 /= errs[1].size();
+            if (!diffs.empty()) dmean /= diffs.size();
+            std::printf("  %-8s intervals %4ld | ext: rec %5.1f%% med %5.2f mean %5.2f px"
+                        " | fc: rec %5.1f%% med %5.2f mean %5.2f px\n",
+                        jk.name, total,
+                        100.0 * rec[0] / total, med(errs[0]), mean0,
+                        100.0 * rec[1] / total, med(errs[1]), mean1);
+            std::printf("           paired dMean %+5.2f px, ext better/worse/tie"
+                        " %ld/%ld/%ld (n=%ld)\n",
+                        dmean, wins, loss, (long)diffs.size() - wins - loss,
+                        (long)diffs.size());
+        }
         return 0;
     }
 

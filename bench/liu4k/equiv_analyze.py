@@ -71,6 +71,41 @@ def recall(A, B, mid_th=6.0, ang_th=5.0, lr=0.6):
     return 100.0 * hit / len(A)
 
 
+def one_to_one(A, B, mid_th=6.0, ang_th=5.0, lr=0.6):
+    """Greedy one-to-one matching (closest midpoints first), same thresholds
+    as recall(). Returns the matched-pair count; the symmetric F1 built on it
+    penalizes segments invented on the transformed frame, which the one-way
+    recall cannot see."""
+    Af = [feats(a) for a in A]
+    Bf = [feats(b) for b in B]
+    grid = defaultdict(list)
+    for i, (bmx, bmy, _, _) in enumerate(Bf):
+        grid[(int(bmx // mid_th), int(bmy // mid_th))].append(i)
+    pairs = []
+    for ai, (amx, amy, aang, aL) in enumerate(Af):
+        if aL < 1:
+            continue
+        cx, cy = int(amx // mid_th), int(amy // mid_th)
+        for gx in (cx - 1, cx, cx + 1):
+            for gy in (cy - 1, cy, cy + 1):
+                for bi in grid.get((gx, gy), ()):
+                    bmx, bmy, bang, bL = Bf[bi]
+                    d = math.hypot(amx - bmx, amy - bmy)
+                    if d <= mid_th and adiff(aang, bang) <= ang_th \
+                       and bL >= 1 and min(aL, bL) / max(aL, bL) >= lr:
+                        pairs.append((d, ai, bi))
+    pairs.sort(key=lambda t: t[0])
+    ua, ub = set(), set()
+    n = 0
+    for _, ai, bi in pairs:
+        if ai in ua or bi in ub:
+            continue
+        ua.add(ai)
+        ub.add(bi)
+        n += 1
+    return n
+
+
 def load(eq, det):
     man = {}
     with open(os.path.join(eq, "manifest_all.csv"), newline="") as f:
@@ -100,6 +135,7 @@ def main():
         for fr, (base, t, W, H) in man.items():
             by_base[base][t] = fr
         eqrec = defaultdict(list)            # transform -> [recall%]
+        symf = defaultdict(list)             # transform -> [(P%, R%, F1%)]
         tms = defaultdict(list)              # transform -> [ms]
         ns = defaultdict(list)               # transform -> [n_segs]
         for base, tf in by_base.items():
@@ -111,15 +147,26 @@ def main():
             for t, fr in tf.items():
                 B = [inv(s, t, Wid, Hid) for s in segs.get(fr, [])]
                 eqrec[t].append(recall(A, B))
+                if A:
+                    nm = one_to_one(A, B) if B else 0
+                    symf[t].append((100.0 * nm / len(B) if B else float("nan"),
+                                    100.0 * nm / len(A),
+                                    200.0 * nm / (len(A) + len(B))))
                 tms[t].append(times[fr][0]); ns[t].append(times[fr][1])
         print(f"\n=== {LABEL[det]} ===")
-        print(f"{'transform':<10}{'equiv%':>9}{'detect ms':>11}{'segs':>8}")
+        print(f"{'transform':<10}{'equiv%':>9}{'symP':>7}{'symR':>7}{'symF1':>7}{'detect ms':>11}{'segs':>8}")
         for t in TRANSFORMS:
             if t in eqrec:
-                print(f"{t:<10}{st.median(eqrec[t]):>9.1f}{st.median(tms[t]):>11.1f}{st.median(ns[t]):>8.0f}")
+                sp = st.median(p for p, _, _ in symf[t])
+                sr = st.median(r for _, r, _ in symf[t])
+                sf = st.median(f for _, _, f in symf[t])
+                print(f"{t:<10}{st.median(eqrec[t]):>9.1f}{sp:>7.1f}{sr:>7.1f}{sf:>7.1f}"
+                      f"{st.median(tms[t]):>11.1f}{st.median(ns[t]):>8.0f}")
         # summary excluding identity
         allr = [r for t in TRANSFORMS if t != "identity" for r in eqrec[t]]
-        print(f"  -> median equivariance over all non-identity transforms: {st.median(allr):.1f}%")
+        allf = [f for t in TRANSFORMS if t != "identity" for _, _, f in symf[t]]
+        print(f"  -> median equivariance over all non-identity transforms: {st.median(allr):.1f}%"
+              f"  (symmetric F1: {st.median(allf):.1f}%)")
 
 
 if __name__ == "__main__":
