@@ -170,6 +170,24 @@ speed benchmarks, isotropy tests, and downstream vanishing-point evaluation
 Third-party detector code is **not vendored** (LSD is AGPL); the benchmark
 harness fetches it at configure time with `-DSWEEPLSD_BUILD_BENCH=ON`.
 
+## Downstream uncertainty-aware estimation
+
+SweepLSD fits each segment by accumulating pixel moments inside its streaming
+labeller, so the statistics that say how well the segment was located --- the
+sample count `N` and the two eigenvalues of their covariance --- already exist
+when the segment is emitted, and cost no extra image pass to hand on.
+
+[LineUQ](https://github.com/yosh-shimizu/LineUQ) is the consuming side: it turns
+those three numbers into a per-segment weight with no tuning parameters, and
+consumes them in a weighted vanishing-point / Manhattan fit. It also re-measures
+the same statistics for detectors that do not supply them, from the image and the
+reported endpoints alone, so the interface is not specific to this detector.
+
+What the weight is worth, measured on a real sequence, and what happens when you
+take the moments from a detector's own support pixels instead --- which is worse
+than not weighting at all --- is shown interactively in
+[Uncertainty](https://yosh-shimizu.github.io/sweeplsd/uncertainty.html).
+
 ## About this project
 
 SweepLSD was designed by Yoshiyasu Shimizu (2014 master's thesis, presented
