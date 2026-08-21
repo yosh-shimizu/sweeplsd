@@ -19,7 +19,7 @@ LSD, ED_Lib EDLines, and ELSED.</p>
 <a href="fpga.html">FPGA</a> <a href="https://github.com/yosh-shimizu/sweeplsd">Repository</a></nav>
 
 <h2>1. Protocol</h2>
-<p>Synthetic scenes (1280×720, 18 random segments, 4 images per condition) with exact
+<p>Synthetic scenes (1280×720, 18 random segments, 20 images per condition) with exact
 ground truth, Gaussian noise σ ∈ {0, 5, 10, 20}. Matching is <b>strict one-to-one</b>
 (each GT segment matches at most one detection; a detection fragmented into several pieces
 is penalised) — lenient one-to-many matching flattered every method and inverted rankings,
@@ -34,23 +34,24 @@ to 5; its F-max points did not lie at the clipped end.</p>
 
 <h2>2. F-max under noise</h2>
 <table><thead><tr><th>noise σ</th><th>SweepLSD</th><th>LSD</th><th>EDLines (ED_Lib)</th><th>ELSED</th></tr></thead><tbody>
-<tr><td>0 (clean)</td><td>0.966</td><td>0.923</td><td>0.953</td><td class="best">0.979</td></tr>
-<tr><td>5</td><td>0.963</td><td>0.926</td><td>0.954</td><td class="best">0.986</td></tr>
-<tr><td>10</td><td>0.949</td><td>0.800</td><td>0.954</td><td class="best">0.986</td></tr>
-<tr><td>20</td><td>0.907</td><td>0.507</td><td>0.961</td><td class="best">0.986</td></tr>
+<tr><td>0 (clean)</td><td>0.958</td><td>0.936</td><td>0.955</td><td class="best">0.991</td></tr>
+<tr><td>5</td><td>0.959</td><td>0.938</td><td>0.950</td><td class="best">0.992</td></tr>
+<tr><td>10</td><td>0.948</td><td>0.788</td><td>0.952</td><td class="best">0.990</td></tr>
+<tr><td>20</td><td>0.905</td><td>0.510</td><td>0.951</td><td class="best">0.990</td></tr>
 </tbody></table>
 <p>Stated plainly: <b>ELSED leads F-max at every noise level</b> on this protocol — its
 fused drawing-and-fitting with validation is extremely effective on synthetic bar scenes,
 and essentially flat in noise. SweepLSD is second on clean and low-noise images; ED_Lib is
 similarly noise-stable at a slightly lower level; LSD degrades fastest under heavy noise.
-A false-positive taxonomy shows the gap to ELSED is driven almost entirely by
+Part of the gap to ELSED is
 <i>fragmentation</i> — under strict one-to-one matching every extra fragment of a
 ground-truth line counts as a false positive, and ELSED's drawing pass jumps
 discontinuities natively. SweepLSD's <b>optional</b> gap-tolerant collinear linker
 (<code>link_collinear</code>, off by default; a finalization-level feature that preserves
 the streaming property) re-assembles fragments across junction cuts and noise breaks and
-closes part of that gap: with it, F-max rises to <b>0.973</b> on clean scenes and
-<b>0.935</b> at σ20.</p>
+closes part of that gap — about a fifth of it at σ20, but little on clean scenes:
+F-max rises from 0.905 to <b>0.924</b> at σ20 and only from 0.958 to <b>0.960</b>
+on clean scenes, so on this protocol fragmentation is a noisy-scene effect.</p>
 
 <div class="gallery">
 <figure><img src="assets/eval/eval_gt.png"><figcaption>ground truth (σ10 scene)</figcaption></figure>
@@ -61,15 +62,17 @@ closes part of that gap: with it, F-max rises to <b>0.973</b> on clean scenes an
 
 <h2>3. Geometric accuracy (matched segments)</h2>
 <table><thead><tr><th>detector</th><th>lateral error</th><th>direction error</th></tr></thead><tbody>
-<tr><td class="sweep">SweepLSD</td><td class="best">0.12 px</td><td class="best">0.01–0.04°</td></tr>
-<tr><td>ELSED</td><td class="best">0.12–0.14 px</td><td>0.07–0.11°</td></tr>
-<tr><td>EDLines (ED_Lib)</td><td>0.13 px</td><td>0.14°</td></tr>
-<tr><td>LSD</td><td>0.15 px</td><td>0.03–0.13°</td></tr>
+<tr><td class="sweep">SweepLSD</td><td>0.12–0.13 px</td><td class="best">0.02–0.04°</td></tr>
+<tr><td>ELSED</td><td>0.12–0.13 px</td><td>0.07–0.09°</td></tr>
+<tr><td>EDLines (ED_Lib)</td><td>0.12–0.13 px</td><td>0.13–0.14°</td></tr>
+<tr><td>LSD</td><td>0.15 px</td><td>0.02–0.12°</td></tr>
 </tbody></table>
-<p>Per-segment geometry is SweepLSD's strongest axis: the scatter-moment line fit over
-every member pixel plus sub-pixel NMS plus the half-pixel lattice correction give it the
-best direction accuracy of the field — 2–5× better than ELSED and an order of magnitude
-better than ED_Lib. (Frame conventions are calibrated on both sides: the detector's
+<p>Per-segment <i>direction</i> is SweepLSD's strongest axis: the scatter-moment line fit
+over every member pixel plus sub-pixel NMS plus the half-pixel lattice correction give it
+the best direction accuracy of the field — 2.2–4.4× better than ELSED and 3.5–8.7×
+better than ED_Lib. Lateral error does not separate them: SweepLSD, ELSED and ED_Lib sit
+within 0.013 px of one another with no ordering stable across noise levels, and only LSD
+is clearly behind. (Frame conventions are calibrated on both sides: the detector's
 half-pixel lattice correction is a shipped refinement, and the evaluator's GT renderer is
 verified to the same sampling convention — a half-pixel mismatch there would tax
 <i>every</i> detector.)</p>
@@ -152,35 +155,52 @@ apply the correction above, or snap endpoints to nearby gradient maxima.</p>
 
 <h2>6. Repeatability under rotation and reflection</h2>
 <p>A detector should return the same segments — geometrically transformed — when the image is
-rotated by a multiple of 90° or mirrored. Tested directly: each of 24 photographs is transformed
-by the eight-element dihedral group (horizontal/vertical flips, 180° and ±90° rotations), each
-detector runs on every version, its segments are mapped back to the original frame, and we report
-the fraction of the original segments reproduced within 6 px and 5° (median over the 24 photos).</p>
+rotated by a multiple of 90° or mirrored. Tested directly: each of the 123 Full-HD photographs of
+the speed corpus is transformed by five of the seven non-identity elements of the dihedral group
+(horizontal and vertical flips, 180° and ±90° rotations; the two diagonal reflections are
+compositions of those and are omitted), each detector runs on every version, its segments are
+mapped back to the original frame, and we report the fraction of the original segments reproduced
+within 6 px and 5° (median over the 123 photographs).</p>
 <table><thead><tr><th>transform</th><th>SweepLSD</th><th>ELSED</th><th>EDLines</th><th>LSD</th></tr></thead><tbody>
-<tr><td>horizontal flip</td><td class="best">97.7</td><td>70.2</td><td>79.5</td><td>74.3</td></tr>
-<tr><td>vertical flip</td><td class="best">96.5</td><td>83.2</td><td>82.1</td><td>74.0</td></tr>
-<tr><td>180° rotation</td><td class="best">96.4</td><td>68.1</td><td>74.0</td><td>69.3</td></tr>
-<tr><td>+90° rotation</td><td class="best">97.1</td><td>72.9</td><td>81.2</td><td>74.0</td></tr>
-<tr><td>−90° rotation</td><td class="best">96.9</td><td>74.1</td><td>77.9</td><td>74.9</td></tr>
-<tr><td><b>median</b></td><td class="best"><b>96.9</b></td><td>72.2</td><td>79.5</td><td>73.4</td></tr>
+<tr><td>horizontal flip</td><td class="best">97.7</td><td>65.7</td><td>79.2</td><td>71.2</td></tr>
+<tr><td>vertical flip</td><td class="best">96.3</td><td>81.7</td><td>80.6</td><td>71.3</td></tr>
+<tr><td>180° rotation</td><td class="best">96.4</td><td>64.4</td><td>71.4</td><td>66.6</td></tr>
+<tr><td>+90° rotation</td><td class="best">97.0</td><td>70.4</td><td>78.4</td><td>70.9</td></tr>
+<tr><td>−90° rotation</td><td class="best">96.9</td><td>70.2</td><td>77.1</td><td>71.5</td></tr>
+<tr><td><b>median</b></td><td class="best"><b>96.8</b></td><td>70</td><td>77</td><td>70</td></tr>
 </tbody></table>
-<p><b>SweepLSD is the most repeatable of the four</b> — 96.9% against 72–80%. The reason is
-structural: the dihedral transforms permute the horizontal and vertical axes among themselves,
-and SweepLSD's deterministic, integer, two-direction pipeline maps consistently under that
-permutation. The greedy anchor-drawing and region-growing of the edge-based detectors follow
-contours in a scan order the transform changes, so they re-segment differently. Detect time is
-nearly orientation-invariant (portrait / 90° frames run ~5–7% slower — more but shorter rows), and
-peak memory does not change with orientation at a fixed resolution (the input image dominates the
-footprint, and SweepLSD's O(width) scratch is far below it).</p>
+<p><b>Under these axis-preserving transforms SweepLSD is the most repeatable of the four</b> —
+96.8% against 70–77%. The reason is structural: the dihedral transforms permute the horizontal and
+vertical axes among themselves, and SweepLSD's deterministic, integer, two-direction pipeline maps
+consistently under that permutation. The greedy anchor-drawing and region-growing of the
+edge-based detectors follow contours in a scan order the transform changes, so they re-segment
+differently. The fraction-reproduced metric is one-sided — segments invented on the transformed
+frame would not lower it — so a symmetric one-to-one F1 was computed as well, and the ordering and
+the gap survive: 93.0% for SweepLSD against 67.6% (ELSED), 75.5% (EDLines) and 68.3% (LSD).
+Detect time is nearly orientation-invariant (portrait / 90° frames run ~5–7% slower — more but
+shorter rows), and peak memory does not change with orientation at a fixed resolution (the input
+image dominates the footprint, and SweepLSD's O(width) scratch is far below it).</p>
+<p><b>The other face of the same property.</b> These transforms preserve the two-way quantisation
+axes exactly, so they are the family most favourable to SweepLSD, and the qualifier is measured
+rather than left open. Repeating the protocol with <i>arbitrary-angle</i> rotations (15/30/45°,
+bilinear resampling, same-size canvas, reference set restricted to segments fully visible after
+rotation) <b>inverts the ordering</b>: every detector drops sharply and SweepLSD drops the most —
+median 48/44/39% at 15/30/45° — while LSD is steadiest (64/62/62%), with ELSED (57/54/49%) and
+EDLines (57/54/54%) between. The symmetric F1 leaves that inversion intact (44/41/36% for SweepLSD
+against 60/59/59% for LSD), with mapped-back precision tracking recall for every detector, so none
+of them inflates its segment count after rotation. Under exact axis-preserving transforms SweepLSD
+is the steadiest of the four; under axis-moving rotation it is the weakest — two faces of the same
+two-way quantisation, and the second is the price of the first.</p>
 
 <h2>7. Honest summary</h2>
 <table><thead><tr><th>axis</th><th style="text-align:left">leader</th></tr></thead><tbody>
 <tr><td>F-max (every noise level, strict 1-to-1)</td><td style="text-align:left">ELSED</td></tr>
-<tr><td>per-segment geometric accuracy (esp. direction)</td><td style="text-align:left" class="sweep">SweepLSD</td></tr>
+<tr><td>per-segment <i>direction</i> accuracy</td><td style="text-align:left" class="sweep">SweepLSD</td></tr>
 <tr><td>low-contrast / soft-edge coverage</td><td style="text-align:left">LSD, EDLines (orientation-coherence linking)</td></tr>
 <tr><td>orientation isotropy on straight-line probes</td><td style="text-align:left">ELSED, LSD (SweepLSD's two-way direction quantisation costs it here)</td></tr>
 <tr><td>curve rejection (only straight lines)</td><td style="text-align:left" class="sweep">SweepLSD</td></tr>
-<tr><td>rotation / reflection repeatability</td><td style="text-align:left" class="sweep">SweepLSD (96.9% vs 72–80%, §6)</td></tr>
+<tr><td>repeatability under flips / 90° rotations</td><td style="text-align:left" class="sweep">SweepLSD (96.8% vs 70–77%, §6)</td></tr>
+<tr><td>repeatability under arbitrary-angle rotation</td><td style="text-align:left">LSD (SweepLSD is the weakest of the four here — the price of the same two-way quantisation, §6)</td></tr>
 <tr><td>absolute endpoint position (raw)</td><td style="text-align:left">LSD (SweepLSD's ≈1.8 px extent bias is deterministic and correctable, §5)</td></tr>
 <tr><td>speed, memory, latency</td><td style="text-align:left" class="sweep">SweepLSD (one-pass)</td></tr>
 <tr><td>indoor vanishing points (fair protocol)</td><td style="text-align:left" class="sweep">SweepLSD (<a href="vp_evaluation.html">details</a>)</td></tr>
@@ -194,9 +214,10 @@ LSD at configure time). Genuine-EDLines rows are produced by
 ELSED rows by the authors' source built separately (Apache-2.0), ingested with
 <code>--elsed-dir</code>.</div>
 
-<footer>All numbers regenerated 2026-07 from this repository's benchmark harness, with
+<footer>All numbers regenerated from this repository's benchmark harness, with
 upstream LSD 1.6 (IPOL) fetched at configure time — the same build a reader gets from
-<code>-DSWEEPLSD_BUILD_BENCH=ON</code>. The SweepLSD and LSD columns of Sections 2 and 3
-were re-run against that fetched copy in 2026-07 and reproduce exactly. ELSED integrated
-2026-07 across every axis of this page.</footer>
+<code>-DSWEEPLSD_BUILD_BENCH=ON</code>. ELSED was integrated across every axis of this
+page in 2026-07. Sections 2 and 3 were re-measured in 2026-08 at 20 scenes per condition
+instead of 4; the ordering is unchanged, but the linker's clean-scene contribution and
+the lateral-error column moved, and both are reported as measured.</footer>
 </div></body></html>
